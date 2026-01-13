@@ -1,0 +1,31 @@
+name: 'Azure IaC Reviewer'
+description: 'Analyzes Azure Bicep files in pull requests and provides cost insights and best practice recommendations'
+author: 'resourcepulse-io'
+
+branding:
+  icon: 'cloud'
+  color: 'blue'
+
+inputs:
+  api_key:
+    description: 'API key for the Azure IaC Reviewer backend service (optional)'
+    required: false
+    default: ''
+  backend_url:
+    description: 'Backend API URL for analysis service'
+    required: false
+    default: 'https://api.resourcepulse.io'
+  comment_mode:
+    description: 'Comment mode: "update" to update existing comment, "new" to create new comment each time'
+    required: false
+    default: 'update'
+
+outputs:
+  resources_detected:
+    description: 'Number of Azure resources detected in changed Bicep files'
+  analysis_status:
+    description: 'Status of the analysis: success, partial, or failed'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'

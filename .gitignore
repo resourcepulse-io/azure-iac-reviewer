@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+lib/
+coverage/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Test
+*.test.js
+
+# Note: dist/ is intentionally NOT ignored as it must be committed for GitHub Actions
