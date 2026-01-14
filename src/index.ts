@@ -1,34 +1,40 @@
 import * as core from '@actions/core';
-import { context } from '@actions/github';
+import * as log from './utils/log';
+import { initializeGitHub } from './github/context';
+import { listBicepFiles } from './github/prFiles';
 
 /**
  * Main entry point for the Azure IaC Reviewer GitHub Action
  */
 async function run(): Promise<void> {
   try {
-    core.info('Azure IaC Reviewer started');
+    log.info('Azure IaC Reviewer started');
 
-    // Validate this is a pull request event
-    if (context.eventName !== 'pull_request') {
-      core.setFailed('This action only works on pull_request events');
+    // Initialize GitHub context and Octokit client
+    const [prContext, octokit] = initializeGitHub();
+
+    log.info(
+      `Processing PR #${prContext.prNumber} in ${prContext.owner}/${prContext.repo}`
+    );
+
+    // List and filter .bicep files
+    const bicepFiles = await listBicepFiles(octokit, prContext);
+
+    // Exit successfully if no .bicep files found (no comment spam)
+    if (bicepFiles.length === 0) {
+      log.info('No .bicep files to analyze. Exiting successfully.');
       return;
     }
 
-    core.info(`Processing PR #${context.issue.number} in ${context.repo.owner}/${context.repo.repo}`);
+    log.info(`Found ${bicepFiles.length} .bicep file(s) to analyze`);
 
-    // TODO: Implementation will be added by subsequent agents
-    // - Agent 2: GitHub Integration (list changed files, filter .bicep)
-    // - Agent 3: Bicep Compilation (compile .bicep to ARM)
-    // - Agent 4: ARM Extraction (extract resource metadata)
-    // - Agent 5: Privacy Sanitization (remove PII)
-    // - Agent 6: Backend Integration (call analysis API)
-    // - Agent 7: Output Formatting (generate markdown)
-    // - Agent 2: Post PR comment
+    // TODO: Implement bicep compilation (Task A4)
+    // TODO: Implement ARM extraction (Task A5)
+    // TODO: Implement sanitization (Task A6)
+    // TODO: Implement backend communication (Task A7)
+    // TODO: Implement PR comment posting (Task A8)
 
-    // Placeholder for future async operations
-    await Promise.resolve();
-
-    core.info('Azure IaC Reviewer completed successfully');
+    log.info('Azure IaC Reviewer completed successfully');
   } catch (error) {
     if (error instanceof Error) {
       core.setFailed(error.message);
