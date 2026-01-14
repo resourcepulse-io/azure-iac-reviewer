@@ -28,7 +28,36 @@ async function run(): Promise<void> {
 
     log.info(`Found ${bicepFiles.length} .bicep file(s) to analyze`);
 
-    // TODO: Implement bicep compilation (Task A4)
+    // Download and cache Bicep CLI
+    const { ensureBicepCli, compileBicepFiles, formatCompilationErrors } =
+      await import('./iac/bicep');
+    const bicepCliPath = await ensureBicepCli();
+
+    // Compile all .bicep files
+    const compilationResults = await compileBicepFiles(bicepCliPath, bicepFiles);
+
+    // Check for compilation errors
+    const compilationErrors = formatCompilationErrors(compilationResults);
+    if (compilationErrors) {
+      // Post compilation errors to PR
+      const { createOrUpdateComment } = await import('./github/comments');
+      await createOrUpdateComment(octokit, prContext, compilationErrors);
+
+      log.warning('Some Bicep files failed to compile, but continuing analysis');
+    }
+
+    // Filter successful compilations for further processing
+    const successfulCompilations = compilationResults.filter((r) => r.success);
+
+    if (successfulCompilations.length === 0) {
+      log.warning('No Bicep files compiled successfully. Analysis cannot proceed.');
+      return;
+    }
+
+    log.info(
+      `${successfulCompilations.length} file(s) compiled successfully, proceeding with analysis`
+    );
+
     // TODO: Implement ARM extraction (Task A5)
     // TODO: Implement sanitization (Task A6)
     // TODO: Implement backend communication (Task A7)

@@ -29872,6 +29872,120 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 6645:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.createOrUpdateComment = createOrUpdateComment;
+const log = __importStar(__nccwpck_require__(6555));
+/**
+ * Marker comment to identify comments created by this action
+ */
+const COMMENT_MARKER = '<!-- azure-iac-reviewer -->';
+/**
+ * Find existing comment created by this action
+ * @param octokit - Authenticated Octokit instance
+ * @param context - PR context
+ * @returns Comment ID if found, null otherwise
+ */
+async function findExistingComment(octokit, context) {
+    try {
+        const comments = await octokit.rest.issues.listComments({
+            owner: context.owner,
+            repo: context.repo,
+            issue_number: context.prNumber,
+        });
+        const existingComment = comments.data.find((comment) => comment.body?.includes(COMMENT_MARKER));
+        return existingComment?.id || null;
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        log.warning(`Failed to list existing comments: ${errorMessage}`);
+        return null;
+    }
+}
+/**
+ * Create or update a PR comment
+ * @param octokit - Authenticated Octokit instance
+ * @param context - PR context
+ * @param body - Comment body (markdown)
+ * @param mode - Comment mode: 'update' or 'new'
+ */
+async function createOrUpdateComment(octokit, context, body, mode = 'update') {
+    // Add marker to comment body
+    const markedBody = `${COMMENT_MARKER}\n${body}`;
+    try {
+        if (mode === 'update') {
+            // Try to find and update existing comment
+            const existingCommentId = await findExistingComment(octokit, context);
+            if (existingCommentId) {
+                log.info(`Updating existing PR comment (ID: ${existingCommentId})`);
+                await octokit.rest.issues.updateComment({
+                    owner: context.owner,
+                    repo: context.repo,
+                    comment_id: existingCommentId,
+                    body: markedBody,
+                });
+                log.info('PR comment updated successfully');
+                return;
+            }
+            // Fall through to create new comment if none exists
+            log.info('No existing comment found, creating new comment');
+        }
+        // Create new comment
+        log.info('Creating new PR comment');
+        await octokit.rest.issues.createComment({
+            owner: context.owner,
+            repo: context.repo,
+            issue_number: context.prNumber,
+            body: markedBody,
+        });
+        log.info('PR comment created successfully');
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to create/update PR comment: ${errorMessage}`);
+    }
+}
+
+
+/***/ }),
+
 /***/ 9556:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30117,6 +30231,283 @@ async function listBicepFiles(octokit, context) {
 
 /***/ }),
 
+/***/ 9788:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ensureBicepCli = ensureBicepCli;
+exports.compileBicepFile = compileBicepFile;
+exports.compileBicepFiles = compileBicepFiles;
+exports.formatCompilationErrors = formatCompilationErrors;
+const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(9896));
+const https = __importStar(__nccwpck_require__(5692));
+const log = __importStar(__nccwpck_require__(6555));
+const exec_1 = __nccwpck_require__(8432);
+/**
+ * Pinned Bicep CLI version for reproducibility
+ */
+const BICEP_VERSION = 'v0.24.24';
+/**
+ * Get the platform-specific Bicep CLI binary name and download URL
+ * @returns Object with binary name and download URL
+ */
+function getBicepPlatformInfo() {
+    const platform = process.platform;
+    const arch = process.arch;
+    let binaryName;
+    let downloadUrl;
+    if (platform === 'win32') {
+        binaryName = 'bicep.exe';
+        downloadUrl = `https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-win-x64.exe`;
+    }
+    else if (platform === 'darwin') {
+        // macOS - check architecture
+        if (arch === 'arm64') {
+            binaryName = 'bicep';
+            downloadUrl = `https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-osx-arm64`;
+        }
+        else {
+            binaryName = 'bicep';
+            downloadUrl = `https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-osx-x64`;
+        }
+    }
+    else if (platform === 'linux') {
+        // Linux - check architecture
+        if (arch === 'arm64') {
+            binaryName = 'bicep';
+            downloadUrl = `https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-arm64`;
+        }
+        else if (arch === 'arm') {
+            binaryName = 'bicep';
+            downloadUrl = `https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-arm`;
+        }
+        else {
+            binaryName = 'bicep';
+            downloadUrl = `https://github.com/Azure/bicep/releases/download/${BICEP_VERSION}/bicep-linux-x64`;
+        }
+    }
+    else {
+        throw new Error(`Unsupported platform: ${platform}`);
+    }
+    return { binaryName, downloadUrl };
+}
+/**
+ * Download a file from a URL
+ * @param url - URL to download from
+ * @param destPath - Destination file path
+ * @returns Promise that resolves when download is complete
+ */
+function downloadFile(url, destPath) {
+    return new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(destPath);
+        https
+            .get(url, (response) => {
+            // Follow redirects
+            if (response.statusCode === 301 ||
+                response.statusCode === 302 ||
+                response.statusCode === 307 ||
+                response.statusCode === 308) {
+                const redirectUrl = response.headers.location;
+                if (!redirectUrl) {
+                    reject(new Error('Redirect response missing location header'));
+                    return;
+                }
+                file.close();
+                fs.unlinkSync(destPath);
+                downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
+                return;
+            }
+            if (response.statusCode !== 200) {
+                reject(new Error(`Failed to download file: HTTP ${response.statusCode} ${response.statusMessage}`));
+                return;
+            }
+            response.pipe(file);
+            file.on('finish', () => {
+                file.close();
+                resolve();
+            });
+        })
+            .on('error', (err) => {
+            fs.unlinkSync(destPath);
+            reject(err);
+        });
+        file.on('error', (err) => {
+            fs.unlinkSync(destPath);
+            reject(err);
+        });
+    });
+}
+/**
+ * Download and cache the Bicep CLI binary
+ * @returns Path to the Bicep CLI binary
+ * @throws Error if download fails or RUNNER_TEMP is not set
+ */
+async function ensureBicepCli() {
+    const runnerTemp = process.env.RUNNER_TEMP;
+    if (!runnerTemp) {
+        throw new Error('RUNNER_TEMP environment variable not set. This action must run in a GitHub Actions environment.');
+    }
+    const { binaryName, downloadUrl } = getBicepPlatformInfo();
+    const bicepPath = path.join(runnerTemp, binaryName);
+    // Check if binary already exists (cached from previous run)
+    if (fs.existsSync(bicepPath)) {
+        log.info(`Bicep CLI already cached at ${bicepPath}, skipping download (version: ${BICEP_VERSION})`);
+        return bicepPath;
+    }
+    log.info(`Downloading Bicep CLI ${BICEP_VERSION} from ${downloadUrl} to ${bicepPath}`);
+    try {
+        await downloadFile(downloadUrl, bicepPath);
+        // Make binary executable on Unix-like systems
+        if (process.platform !== 'win32') {
+            fs.chmodSync(bicepPath, 0o755);
+        }
+        log.info('Bicep CLI downloaded and ready');
+        return bicepPath;
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to download Bicep CLI: ${errorMessage}`);
+    }
+}
+/**
+ * Compile a single Bicep file to ARM JSON
+ * @param bicepCliPath - Path to the Bicep CLI binary
+ * @param filePath - Path to the .bicep file to compile
+ * @returns Compilation result with ARM template or error
+ */
+async function compileBicepFile(bicepCliPath, filePath) {
+    log.info(`Compiling ${filePath}`);
+    try {
+        const result = await (0, exec_1.executeCommand)(bicepCliPath, [
+            'build',
+            filePath,
+            '--stdout',
+        ]);
+        // Check for compilation errors (non-zero exit code or stderr output)
+        if (result.exitCode !== 0 || result.stderr) {
+            const errorMessage = result.stderr || 'Unknown compilation error';
+            log.warning(`Compilation failed for ${filePath}: ${errorMessage}`);
+            return {
+                filePath,
+                success: false,
+                error: errorMessage,
+            };
+        }
+        // Parse ARM JSON from stdout
+        try {
+            const armTemplate = JSON.parse(result.stdout);
+            log.info(`Successfully compiled ${filePath}`);
+            return {
+                filePath,
+                success: true,
+                armTemplate,
+            };
+        }
+        catch (parseError) {
+            const errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
+            log.warning(`Failed to parse ARM JSON for ${filePath}: ${errorMessage}`);
+            return {
+                filePath,
+                success: false,
+                error: `Failed to parse ARM template: ${errorMessage}`,
+            };
+        }
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        log.warning(`Failed to compile ${filePath}: ${errorMessage}`);
+        return {
+            filePath,
+            success: false,
+            error: errorMessage,
+        };
+    }
+}
+/**
+ * Compile multiple Bicep files
+ * @param bicepCliPath - Path to the Bicep CLI binary
+ * @param filePaths - Array of .bicep file paths to compile
+ * @returns Array of compilation results (both successes and failures)
+ */
+async function compileBicepFiles(bicepCliPath, filePaths) {
+    log.info(`Compiling ${filePaths.length} Bicep file(s)`);
+    const results = [];
+    // Compile files sequentially to avoid overwhelming the system
+    for (const filePath of filePaths) {
+        const result = await compileBicepFile(bicepCliPath, filePath);
+        results.push(result);
+    }
+    const successCount = results.filter((r) => r.success).length;
+    const failureCount = results.length - successCount;
+    log.info(`Compilation complete: ${successCount} succeeded, ${failureCount} failed`);
+    return results;
+}
+/**
+ * Format compilation errors for PR comment
+ * @param results - Array of compilation results
+ * @returns Markdown-formatted error message, or null if no errors
+ */
+function formatCompilationErrors(results) {
+    const failures = results.filter((r) => !r.success);
+    if (failures.length === 0) {
+        return null;
+    }
+    const lines = [
+        '## Bicep Compilation Errors',
+        '',
+        `Found ${failures.length} file(s) with compilation errors:`,
+        '',
+    ];
+    for (const failure of failures) {
+        lines.push(`### \`${failure.filePath}\``);
+        lines.push('');
+        lines.push('```');
+        lines.push(failure.error || 'Unknown error');
+        lines.push('```');
+        lines.push('');
+    }
+    return lines.join('\n');
+}
+
+
+/***/ }),
+
 /***/ 9407:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30177,7 +30568,26 @@ async function run() {
             return;
         }
         log.info(`Found ${bicepFiles.length} .bicep file(s) to analyze`);
-        // TODO: Implement bicep compilation (Task A4)
+        // Download and cache Bicep CLI
+        const { ensureBicepCli, compileBicepFiles, formatCompilationErrors } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9788)));
+        const bicepCliPath = await ensureBicepCli();
+        // Compile all .bicep files
+        const compilationResults = await compileBicepFiles(bicepCliPath, bicepFiles);
+        // Check for compilation errors
+        const compilationErrors = formatCompilationErrors(compilationResults);
+        if (compilationErrors) {
+            // Post compilation errors to PR
+            const { createOrUpdateComment } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(6645)));
+            await createOrUpdateComment(octokit, prContext, compilationErrors);
+            log.warning('Some Bicep files failed to compile, but continuing analysis');
+        }
+        // Filter successful compilations for further processing
+        const successfulCompilations = compilationResults.filter((r) => r.success);
+        if (successfulCompilations.length === 0) {
+            log.warning('No Bicep files compiled successfully. Analysis cannot proceed.');
+            return;
+        }
+        log.info(`${successfulCompilations.length} file(s) compiled successfully, proceeding with analysis`);
         // TODO: Implement ARM extraction (Task A5)
         // TODO: Implement sanitization (Task A6)
         // TODO: Implement backend communication (Task A7)
@@ -30194,6 +30604,108 @@ async function run() {
     }
 }
 void run();
+
+
+/***/ }),
+
+/***/ 8432:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.executeCommand = executeCommand;
+const child_process_1 = __nccwpck_require__(5317);
+const util_1 = __nccwpck_require__(9023);
+const log = __importStar(__nccwpck_require__(6555));
+const execPromise = (0, util_1.promisify)(child_process_1.exec);
+/**
+ * Execute a shell command and return the result
+ * @param command - Command to execute
+ * @param args - Command arguments (will be properly escaped)
+ * @param options - Execution options
+ * @returns Result with stdout, stderr, and exit code
+ * @throws Error if command execution fails
+ */
+async function executeCommand(command, args = [], options = {}) {
+    // Escape arguments for shell
+    const escapedArgs = args.map((arg) => {
+        // If argument contains spaces or special characters, quote it
+        if (arg.includes(' ') || arg.includes('"') || arg.includes("'")) {
+            // Escape double quotes and wrap in double quotes
+            return `"${arg.replace(/"/g, '\\"')}"`;
+        }
+        return arg;
+    });
+    const fullCommand = [command, ...escapedArgs].join(' ');
+    log.debug(`Executing command: ${fullCommand}`);
+    try {
+        const { stdout, stderr } = await execPromise(fullCommand, {
+            cwd: options.cwd,
+            env: options.env || process.env,
+            maxBuffer: options.maxBuffer || 10 * 1024 * 1024, // 10MB default
+            timeout: options.timeout || 60000, // 60 seconds default
+        });
+        log.debug(`Command completed successfully`);
+        return {
+            stdout: stdout.trim(),
+            stderr: stderr.trim(),
+            exitCode: 0,
+        };
+    }
+    catch (error) {
+        // exec throws an error on non-zero exit codes
+        if (error &&
+            typeof error === 'object' &&
+            'code' in error &&
+            'stdout' in error &&
+            'stderr' in error) {
+            const execError = error;
+            log.debug(`Command failed with exit code ${execError.code}: ${execError.stderr}`);
+            return {
+                stdout: execError.stdout?.trim() || '',
+                stderr: execError.stderr?.trim() || '',
+                exitCode: execError.code || 1,
+            };
+        }
+        // Unknown error format
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to execute command: ${errorMessage}`);
+    }
+}
 
 
 /***/ }),
