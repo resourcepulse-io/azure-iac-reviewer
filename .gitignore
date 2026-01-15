@@ -27,3 +27,5 @@ Thumbs.db
 *.test.js
 
 # Note: dist/ is intentionally NOT ignored as it must be committed for GitHub Actions
+# But exclude source maps that contain local paths
+dist/**/*.d.ts.map
