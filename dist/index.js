@@ -29872,6 +29872,339 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 9325:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.analyzeResources = analyzeResources;
+const log = __importStar(__nccwpck_require__(6555));
+const sanitize_1 = __nccwpck_require__(8020);
+/**
+ * Backend API URL - hardcoded and non-configurable by users
+ */
+const BACKEND_URL = 'https://api.resourcepulse.io';
+/**
+ * Default timeout for backend requests (30 seconds)
+ */
+const DEFAULT_TIMEOUT_MS = 30000;
+/**
+ * Generate local fallback markdown when backend is unavailable or no API key provided
+ * @param resources - Sanitized resources to summarize
+ * @returns Markdown formatted summary
+ */
+function generateLocalFallback(resources) {
+    // Count resources by kind
+    const kindCounts = new Map();
+    for (const resource of resources) {
+        const count = kindCounts.get(resource.kind) || 0;
+        kindCounts.set(resource.kind, count + 1);
+    }
+    // Sort by count (descending) for better display
+    const sortedKinds = Array.from(kindCounts.entries()).sort((a, b) => b[1] - a[1]);
+    // Build markdown summary
+    const lines = [];
+    lines.push('## Azure Resource Analysis');
+    lines.push('');
+    lines.push(`Detected **${resources.length}** resource(s) in your Bicep files:`);
+    lines.push('');
+    // If more than 5 resources, make it collapsible
+    if (resources.length > 5) {
+        lines.push('<details>');
+        lines.push(`<summary>📋 Resource Details (${resources.length} resources)</summary>`);
+        lines.push('');
+    }
+    // Resource breakdown by kind
+    for (const [kind, count] of sortedKinds) {
+        const kindLabel = formatKindLabel(kind);
+        lines.push(`- **${kindLabel}**: ${count}`);
+    }
+    // Close details if we opened it
+    if (resources.length > 5) {
+        lines.push('');
+        lines.push('</details>');
+    }
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+    lines.push('💡 **Want detailed cost estimates and security recommendations?**');
+    lines.push('');
+    lines.push('Add an API key to enable full analysis powered by ResourcePulse:');
+    lines.push('');
+    lines.push('```yaml');
+    lines.push('- uses: resourcepulse-io/azure-iac-reviewer@v1');
+    lines.push('  with:');
+    lines.push('    api_key: ${{ secrets.RESOURCEPULSE_API_KEY }}');
+    lines.push('```');
+    lines.push('');
+    // Add collapsible privacy information
+    lines.push('<details>');
+    lines.push('<summary>🔒 Privacy Information</summary>');
+    lines.push('');
+    lines.push('This action analyzes anonymized resource metadata only - no source code or identifiers are transmitted. All sensitive information (names, IDs, secrets) is stripped before analysis.');
+    lines.push('');
+    lines.push('</details>');
+    return lines.join('\n');
+}
+/**
+ * Format resource kind into human-readable label
+ * @param kind - Resource kind identifier
+ * @returns Formatted label
+ */
+function formatKindLabel(kind) {
+    const labels = {
+        vm: 'Virtual Machines',
+        app_service: 'App Services',
+        app_service_plan: 'App Service Plans',
+        sql_db: 'SQL Databases',
+        storage: 'Storage Accounts',
+        vnet: 'Virtual Networks',
+        nsg: 'Network Security Groups',
+        other: 'Other Resources',
+    };
+    return labels[kind] || kind.toUpperCase();
+}
+/**
+ * Call backend API with timeout and error handling
+ * @param resources - Sanitized resources to analyze
+ * @param apiKey - Backend authentication token
+ * @param backendUrl - Backend API endpoint
+ * @param repoInfo - Optional repository metadata
+ * @returns Backend response or null if failed
+ */
+async function callBackend(resources, apiKey, backendUrl, repoInfo) {
+    // Validate no sensitive data before sending
+    const validation = (0, sanitize_1.validateNoSensitiveData)(resources);
+    if (!validation.valid) {
+        log.error('Privacy contract violation detected - refusing to send data');
+        log.error(`Violations: ${validation.violations.join(', ')}`);
+        throw new Error('Privacy contract violation: Sanitized data contains sensitive information');
+    }
+    const requestPayload = {
+        resources,
+        timestamp: new Date().toISOString(),
+    };
+    // Include repository info if provided
+    if (repoInfo) {
+        requestPayload.repo = repoInfo;
+    }
+    log.debug(`Calling backend API: ${backendUrl}`);
+    log.debug(`Sending ${resources.length} sanitized resource(s)`);
+    if (repoInfo) {
+        log.debug(`Repository: ${repoInfo.fullName}`);
+    }
+    try {
+        // Create AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+        const response = await fetch(`${backendUrl}/analyze`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+                'User-Agent': 'azure-iac-reviewer/1.0.0',
+            },
+            body: JSON.stringify(requestPayload),
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        // Handle non-OK responses
+        if (!response.ok) {
+            log.warning(`Backend returned status ${response.status}: ${response.statusText}`);
+            // Try to parse error message
+            try {
+                const errorData = (await response.json());
+                log.warning(`Backend error: ${errorData.error || errorData.message}`);
+            }
+            catch {
+                // Ignore JSON parse errors
+            }
+            return null;
+        }
+        // Parse successful response
+        const data = (await response.json());
+        log.debug('Backend response received successfully');
+        return data;
+    }
+    catch (error) {
+        if (error instanceof Error) {
+            if (error.name === 'AbortError') {
+                log.warning(`Backend request timed out after ${DEFAULT_TIMEOUT_MS}ms`);
+            }
+            else if (error.message.includes('fetch failed') ||
+                error.message.includes('ENOTFOUND') ||
+                error.message.includes('ECONNREFUSED')) {
+                log.warning(`Network error calling backend: ${error.message}`);
+            }
+            else {
+                log.warning(`Error calling backend: ${error.message}`);
+            }
+        }
+        else {
+            log.warning('Unknown error calling backend');
+        }
+        return null;
+    }
+}
+/**
+ * Analyze resources using backend service or local fallback
+ * This is the main entry point for backend integration
+ * @param resources - Sanitized resources to analyze
+ * @param apiKey - Optional backend authentication token
+ * @param repoFullName - Optional repository full name (owner/repo format)
+ * @returns Analysis result with markdown message
+ */
+async function analyzeResources(resources, apiKey, repoFullName) {
+    log.debug('Starting resource analysis');
+    // If no API key provided, use local fallback immediately
+    if (!apiKey) {
+        log.info('No API key provided - using local fallback analysis');
+        const markdown = generateLocalFallback(resources);
+        return {
+            success: true,
+            source: 'local',
+            markdown,
+        };
+    }
+    // Try to call backend using the hardcoded BACKEND_URL
+    log.info(`Attempting backend analysis at ${BACKEND_URL}`);
+    // Prepare repository info if provided
+    const repoInfo = repoFullName
+        ? { fullName: repoFullName }
+        : undefined;
+    const backendResponse = await callBackend(resources, apiKey, BACKEND_URL, repoInfo);
+    // If backend succeeded, return its response
+    if (backendResponse && (backendResponse.markdown || backendResponse.message)) {
+        log.info('Backend analysis completed successfully');
+        const markdown = backendResponse.markdown || backendResponse.message || '';
+        return {
+            success: true,
+            source: 'backend',
+            markdown,
+        };
+    }
+    // Backend failed - use local fallback
+    log.warning('Backend analysis failed - falling back to local summary');
+    const markdown = generateLocalFallback(resources);
+    return {
+        success: true,
+        source: 'local',
+        markdown,
+    };
+}
+
+
+/***/ }),
+
+/***/ 1990:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.COMMENT_MARKER = void 0;
+exports.formatPRComment = formatPRComment;
+exports.hasMarker = hasMarker;
+exports.extractContent = extractContent;
+/**
+ * Comment marker for identifying comments created by this action
+ */
+exports.COMMENT_MARKER = '<!-- azure-iac-reviewer -->';
+/**
+ * Get the version of this action from package.json
+ * @returns Version string (e.g., "1.0.0")
+ */
+function getVersion() {
+    // In production, this would be injected during build
+    // For now, return a static version
+    return '1.0.0';
+}
+/**
+ * Generate footer with tool attribution
+ * @returns Footer markdown
+ */
+function generateFooter() {
+    const version = getVersion();
+    return `\n---\n<sub>🔍 Analyzed by [ResourcePulse](https://resourcepulse.io) • v${version}</sub>`;
+}
+/**
+ * Format analysis result as PR comment markdown
+ * Adds comment marker and footer to the analysis markdown
+ * @param result - Analysis result from backend or local fallback
+ * @returns Complete PR comment body with marker and footer
+ */
+function formatPRComment(result) {
+    const lines = [];
+    // Add marker comment for update-in-place functionality
+    lines.push(exports.COMMENT_MARKER);
+    // Add the analysis content (already formatted as markdown)
+    lines.push(result.markdown);
+    // Add footer with attribution
+    lines.push(generateFooter());
+    return lines.join('\n');
+}
+/**
+ * Check if a comment body was created by this action
+ * @param commentBody - Comment body to check
+ * @returns True if the comment contains the marker
+ */
+function hasMarker(commentBody) {
+    return commentBody.includes(exports.COMMENT_MARKER);
+}
+/**
+ * Extract the content from a marked comment (removes marker and footer)
+ * Useful for testing or comment analysis
+ * @param markedComment - Comment with marker and footer
+ * @returns Just the analysis content
+ */
+function extractContent(markedComment) {
+    // Remove marker
+    let content = markedComment.replace(exports.COMMENT_MARKER, '').trim();
+    // Remove footer (everything after the last ---)
+    const footerIndex = content.lastIndexOf('\n---\n');
+    if (footerIndex !== -1) {
+        content = content.substring(0, footerIndex).trim();
+    }
+    return content;
+}
+
+
+/***/ }),
+
 /***/ 6645:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -29913,10 +30246,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.createOrUpdateComment = createOrUpdateComment;
 const log = __importStar(__nccwpck_require__(6555));
+const markdown_1 = __nccwpck_require__(1990);
 /**
- * Marker comment to identify comments created by this action
+ * NOTE: COMMENT_MARKER is imported from ../format/markdown
+ * to ensure consistency across the codebase
  */
-const COMMENT_MARKER = '<!-- azure-iac-reviewer -->';
 /**
  * Find existing comment created by this action
  * @param octokit - Authenticated Octokit instance
@@ -29930,7 +30264,7 @@ async function findExistingComment(octokit, context) {
             repo: context.repo,
             issue_number: context.prNumber,
         });
-        const existingComment = comments.data.find((comment) => comment.body?.includes(COMMENT_MARKER));
+        const existingComment = comments.data.find((comment) => comment.body?.includes(markdown_1.COMMENT_MARKER));
         return existingComment?.id || null;
     }
     catch (error) {
@@ -29943,12 +30277,12 @@ async function findExistingComment(octokit, context) {
  * Create or update a PR comment
  * @param octokit - Authenticated Octokit instance
  * @param context - PR context
- * @param body - Comment body (markdown)
+ * @param body - Comment body (markdown) - should already include marker via formatPRComment()
  * @param mode - Comment mode: 'update' or 'new'
  */
 async function createOrUpdateComment(octokit, context, body, mode = 'update') {
-    // Add marker to comment body
-    const markedBody = `${COMMENT_MARKER}\n${body}`;
+    // Body should already include marker from formatPRComment()
+    // No need to add it again here
     try {
         if (mode === 'update') {
             // Try to find and update existing comment
@@ -29959,7 +30293,7 @@ async function createOrUpdateComment(octokit, context, body, mode = 'update') {
                     owner: context.owner,
                     repo: context.repo,
                     comment_id: existingCommentId,
-                    body: markedBody,
+                    body,
                 });
                 log.info('PR comment updated successfully');
                 return;
@@ -29973,7 +30307,7 @@ async function createOrUpdateComment(octokit, context, body, mode = 'update') {
             owner: context.owner,
             repo: context.repo,
             issue_number: context.prNumber,
-            body: markedBody,
+            body,
         });
         log.info('PR comment created successfully');
     }
@@ -30073,7 +30407,8 @@ function parsePRContext() {
     if (!owner || !repo || !prNumber) {
         throw new Error('Event payload is missing required fields (owner, repo, or PR number)');
     }
-    log.info(`Detected PR #${prNumber} in ${owner}/${repo}`);
+    const fullName = `${owner}/${repo}`;
+    log.info(`Detected PR #${prNumber} in ${fullName}`);
     log.debug(`PR head SHA: ${sha}`);
     log.debug(`PR head ref: ${ref}`);
     return {
@@ -30083,6 +30418,7 @@ function parsePRContext() {
         eventName,
         sha,
         ref,
+        fullName,
     };
 }
 /**
@@ -30226,6 +30562,232 @@ async function listBicepFiles(octokit, context) {
         });
     }
     return bicepFiles;
+}
+
+
+/***/ }),
+
+/***/ 8476:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.extractResourceMetadata = extractResourceMetadata;
+const log = __importStar(__nccwpck_require__(6555));
+/**
+ * ARM resource type to normalized kind mapping
+ */
+const TYPE_TO_KIND_MAP = {
+    'Microsoft.Compute/virtualMachines': 'vm',
+    'Microsoft.Web/serverfarms': 'app_service_plan',
+    'Microsoft.Web/sites': 'app_service',
+    'Microsoft.Sql/servers/databases': 'sql_db',
+    'Microsoft.Storage/storageAccounts': 'storage',
+    'Microsoft.Network/virtualNetworks': 'vnet',
+    'Microsoft.Network/networkSecurityGroups': 'nsg',
+};
+/**
+ * Normalize ARM resource type to a simplified kind
+ * @param type - ARM resource type (e.g., "Microsoft.Compute/virtualMachines")
+ * @returns Normalized kind (e.g., "vm") or "other" if not mapped
+ */
+function normalizeResourceType(type) {
+    return TYPE_TO_KIND_MAP[type] || 'other';
+}
+/**
+ * Extract SKU information from an ARM resource
+ * SKU can be in various formats:
+ * - { sku: { name: "Standard_D2s_v3" } }
+ * - { sku: { tier: "Standard" } }
+ * - { properties: { sku: "S1" } }
+ * @param resource - ARM resource object
+ * @returns SKU string if found, undefined otherwise
+ */
+function extractSku(resource) {
+    // Try resource.sku.name
+    if (resource.sku && typeof resource.sku === 'object') {
+        const sku = resource.sku;
+        if (sku.name && typeof sku.name === 'string') {
+            return sku.name;
+        }
+        // Try resource.sku.tier
+        if (sku.tier && typeof sku.tier === 'string') {
+            return sku.tier;
+        }
+    }
+    // Try resource.properties.sku
+    if (resource.properties && typeof resource.properties === 'object') {
+        const properties = resource.properties;
+        if (properties.sku && typeof properties.sku === 'string') {
+            return properties.sku;
+        }
+        // Try resource.properties.sku.name
+        if (properties.sku && typeof properties.sku === 'object') {
+            const sku = properties.sku;
+            if (sku.name && typeof sku.name === 'string') {
+                return sku.name;
+            }
+        }
+    }
+    return undefined;
+}
+/**
+ * Extract region/location from an ARM resource
+ * @param resource - ARM resource object
+ * @returns Region string if found, undefined otherwise
+ */
+function extractRegion(resource) {
+    if (resource.location && typeof resource.location === 'string') {
+        return resource.location;
+    }
+    return undefined;
+}
+/**
+ * Extract API version from an ARM resource
+ * @param resource - ARM resource object
+ * @returns API version string if found, undefined otherwise
+ */
+function extractApiVersion(resource) {
+    if (resource.apiVersion && typeof resource.apiVersion === 'string') {
+        return resource.apiVersion;
+    }
+    return undefined;
+}
+/**
+ * Extract relevant properties from an ARM resource
+ * Only includes non-sensitive properties that may be useful for analysis
+ * @param resource - ARM resource object
+ * @returns Properties object or undefined
+ */
+function extractProperties(resource) {
+    if (resource.properties && typeof resource.properties === 'object') {
+        // Return a shallow copy of properties
+        // The sanitization module will handle removing sensitive data
+        return { ...resource.properties };
+    }
+    return undefined;
+}
+/**
+ * Extract metadata from a single ARM resource
+ * @param resource - ARM resource object
+ * @returns Resource metadata
+ */
+function extractSingleResourceMetadata(resource) {
+    const type = resource.type && typeof resource.type === 'string'
+        ? resource.type
+        : 'unknown';
+    const kind = normalizeResourceType(type);
+    const sku = extractSku(resource);
+    const region = extractRegion(resource);
+    const apiVersion = extractApiVersion(resource);
+    const properties = extractProperties(resource);
+    const metadata = {
+        type,
+        kind,
+    };
+    // Only include optional fields if they exist
+    if (sku !== undefined) {
+        metadata.sku = sku;
+    }
+    if (region !== undefined) {
+        metadata.region = region;
+    }
+    if (apiVersion !== undefined) {
+        metadata.apiVersion = apiVersion;
+    }
+    if (properties !== undefined) {
+        metadata.properties = properties;
+    }
+    return metadata;
+}
+/**
+ * Recursively extract resources from ARM template, including nested resources
+ * @param resources - Array of ARM resources
+ * @param accumulated - Accumulator for recursively collected resources
+ * @returns Array of resource metadata
+ */
+function extractResourcesRecursive(resources, accumulated = []) {
+    for (const resource of resources) {
+        if (typeof resource !== 'object' || resource === null) {
+            continue;
+        }
+        const resourceObj = resource;
+        // Extract metadata from current resource
+        const metadata = extractSingleResourceMetadata(resourceObj);
+        accumulated.push(metadata);
+        // Check for nested resources
+        if (Array.isArray(resourceObj.resources)) {
+            extractResourcesRecursive(resourceObj.resources, accumulated);
+        }
+    }
+    return accumulated;
+}
+/**
+ * Extract resource metadata from compiled ARM JSON template
+ * @param armJson - ARM JSON template as a string
+ * @returns Extraction result with resources, count, and detected kinds
+ * @throws Error if JSON is invalid or missing resources array
+ */
+function extractResourceMetadata(armJson) {
+    log.debug('Extracting resource metadata from ARM template');
+    // Parse ARM JSON
+    let armTemplate;
+    try {
+        armTemplate = JSON.parse(armJson);
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to parse ARM JSON: ${errorMessage}`);
+    }
+    // Validate resources array exists
+    if (!Array.isArray(armTemplate.resources)) {
+        throw new Error('ARM template is missing resources array or resources is not an array');
+    }
+    // Extract resources recursively (handles nested resources)
+    const resources = extractResourcesRecursive(armTemplate.resources);
+    // Calculate statistics
+    const resourceCount = resources.length;
+    const kindsDetected = [...new Set(resources.map((r) => r.kind))];
+    log.debug(`Extracted ${resourceCount} resource(s), kinds detected: ${kindsDetected.join(', ')}`);
+    return {
+        resources,
+        resourceCount,
+        kindsDetected,
+    };
 }
 
 
@@ -30495,14 +31057,398 @@ function formatCompilationErrors(results) {
         '',
     ];
     for (const failure of failures) {
+        const errorMessage = failure.error || 'Unknown error';
+        const isLongError = errorMessage.length > 500;
         lines.push(`### \`${failure.filePath}\``);
         lines.push('');
-        lines.push('```');
-        lines.push(failure.error || 'Unknown error');
-        lines.push('```');
+        if (isLongError) {
+            // Make long errors collapsible
+            lines.push('<details>');
+            lines.push(`<summary>⚠️ Error Details (${errorMessage.length} chars)</summary>`);
+            lines.push('');
+            lines.push('```');
+            lines.push(errorMessage);
+            lines.push('```');
+            lines.push('');
+            lines.push('</details>');
+        }
+        else {
+            // Short errors displayed inline
+            lines.push('```');
+            lines.push(errorMessage);
+            lines.push('```');
+        }
         lines.push('');
     }
     return lines.join('\n');
+}
+
+
+/***/ }),
+
+/***/ 8020:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.sanitizeResources = sanitizeResources;
+exports.validateNoSensitiveData = validateNoSensitiveData;
+const log = __importStar(__nccwpck_require__(6555));
+/**
+ * Patterns to detect sensitive data that must never be sent to backend
+ */
+const SENSITIVE_PATTERNS = {
+    // GUID pattern: 8-4-4-4-12 hex characters
+    guid: /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+    // Azure Resource ID pattern
+    resourceId: /\/subscriptions\/[^/]+\/resourceGroups\//i,
+    // Connection string patterns
+    connectionString: /(AccountName|AccountKey|DefaultEndpointsProtocol|EndpointSuffix)=/i,
+    // Base64 encoded data (potential secrets)
+    base64Long: /^[A-Za-z0-9+/]{40,}={0,2}$/,
+};
+/**
+ * Fields that should always be removed (blacklist)
+ */
+const FORBIDDEN_FIELDS = new Set([
+    'name',
+    'id',
+    'resourceId',
+    'resourceid',
+    'dependsOn',
+    'dependson',
+    'password',
+    'secret',
+    'key',
+    'apikey',
+    'apiKey',
+    'connectionString',
+    'connectionstring',
+    'accessKey',
+    'accesskey',
+    'token',
+    'credential',
+    'credentials',
+    'principalId',
+    'principalid',
+    'tenantId',
+    'tenantid',
+    'clientId',
+    'clientid',
+    'clientSecret',
+    'clientsecret',
+    'subscriptionId',
+    'subscriptionid',
+]);
+/**
+ * Property keys that are safe to keep (whitelist for known safe numeric/boolean properties)
+ */
+const SAFE_PROPERTY_KEYS = new Set([
+    'tier',
+    'capacity',
+    'size',
+    'count',
+    'enabled',
+    'disabled',
+    'replicas',
+    'instances',
+    'cores',
+    'memory',
+    'storage',
+    'maxsize',
+    'minsize',
+    'autoscale',
+    'version',
+    'protocol',
+    'port',
+    'timeout',
+    'retries',
+    'interval',
+    'threshold',
+]);
+/**
+ * Check if a field name is forbidden (contains sensitive data)
+ * @param fieldName - Field name to check
+ * @returns True if field should be removed
+ */
+function isForbiddenField(fieldName) {
+    const lowerField = fieldName.toLowerCase();
+    // Check exact matches
+    if (FORBIDDEN_FIELDS.has(lowerField)) {
+        return true;
+    }
+    // Check if field contains forbidden substrings
+    for (const forbidden of FORBIDDEN_FIELDS) {
+        if (lowerField.includes(forbidden)) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
+ * Check if a string value contains sensitive data patterns
+ * @param value - String value to check
+ * @returns True if value contains sensitive patterns
+ */
+function containsSensitivePattern(value) {
+    // Check GUID pattern
+    if (SENSITIVE_PATTERNS.guid.test(value)) {
+        return true;
+    }
+    // Check resource ID pattern
+    if (SENSITIVE_PATTERNS.resourceId.test(value)) {
+        return true;
+    }
+    // Check connection string pattern
+    if (SENSITIVE_PATTERNS.connectionString.test(value)) {
+        return true;
+    }
+    // Check for long base64 strings (likely secrets)
+    if (value.length > 40 && SENSITIVE_PATTERNS.base64Long.test(value)) {
+        return true;
+    }
+    return false;
+}
+/**
+ * Check if a value is safe to include (primitive safe types)
+ * @param value - Value to check
+ * @returns True if value is safe
+ */
+function isSafeValue(value) {
+    // Numbers are always safe
+    if (typeof value === 'number') {
+        return true;
+    }
+    // Booleans are always safe
+    if (typeof value === 'boolean') {
+        return true;
+    }
+    // Null is safe
+    if (value === null) {
+        return true;
+    }
+    // Short strings that are likely enum values are safe
+    if (typeof value === 'string') {
+        // Very short strings are likely enums/flags
+        if (value.length <= 3) {
+            return true;
+        }
+        // Common enum patterns (Enabled, Disabled, true, false, etc.)
+        const safeEnums = /^(enabled?|disabled?|true|false|yes|no|on|off|allow|deny|accept|reject)$/i;
+        if (safeEnums.test(value)) {
+            return true;
+        }
+        // Check if contains sensitive patterns
+        if (containsSensitivePattern(value)) {
+            return false;
+        }
+        // Strings longer than 50 chars are suspicious (likely names/IDs)
+        if (value.length > 50) {
+            return false;
+        }
+        // If it's a short string without sensitive patterns, it's likely safe
+        return value.length <= 20;
+    }
+    // Arrays and objects need recursive checking
+    return false;
+}
+/**
+ * Sanitize properties object by removing sensitive fields and values
+ * @param properties - Properties object to sanitize
+ * @param removedFields - Set to track removed field names
+ * @returns Sanitized properties or undefined if all fields removed
+ */
+function sanitizeProperties(properties, removedFields) {
+    const sanitized = {};
+    for (const [key, value] of Object.entries(properties)) {
+        // Skip forbidden fields
+        if (isForbiddenField(key)) {
+            removedFields.add(key);
+            continue;
+        }
+        // Special handling for tags - always remove as they contain sensitive values
+        if (key.toLowerCase() === 'tags') {
+            removedFields.add(key);
+            continue;
+        }
+        // Handle nested objects
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const nestedSanitized = sanitizeProperties(value, removedFields);
+            if (nestedSanitized && Object.keys(nestedSanitized).length > 0) {
+                sanitized[key] = nestedSanitized;
+            }
+            continue;
+        }
+        // Handle arrays - only keep if all elements are safe
+        if (Array.isArray(value)) {
+            const safeArray = value.filter((item) => isSafeValue(item));
+            if (safeArray.length > 0 && safeArray.length === value.length) {
+                // Only include if we didn't filter anything out
+                sanitized[key] = safeArray;
+            }
+            else {
+                removedFields.add(key);
+            }
+            continue;
+        }
+        // Keep value if it's safe or if the key is in the safe list
+        if (isSafeValue(value) || SAFE_PROPERTY_KEYS.has(key.toLowerCase())) {
+            sanitized[key] = value;
+        }
+        else {
+            removedFields.add(key);
+        }
+    }
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+/**
+ * Sanitize a single resource by removing all identifying information
+ * @param resource - Resource metadata to sanitize
+ * @param removedFields - Set to track removed field names
+ * @returns Sanitized resource
+ */
+function sanitizeSingleResource(resource, removedFields) {
+    const sanitized = {
+        type: resource.type,
+        kind: resource.kind,
+    };
+    // SKU is safe to include (e.g., "Standard_D2s_v3")
+    if (resource.sku) {
+        sanitized.sku = resource.sku;
+    }
+    // Region is safe to include (e.g., "eastus")
+    if (resource.region) {
+        sanitized.region = resource.region;
+    }
+    // API version is safe to include (e.g., "2023-01-01")
+    if (resource.apiVersion) {
+        sanitized.apiVersion = resource.apiVersion;
+    }
+    // Sanitize properties if present
+    if (resource.properties) {
+        const safeProperties = sanitizeProperties(resource.properties, removedFields);
+        if (safeProperties) {
+            sanitized.safeProperties = safeProperties;
+        }
+    }
+    return sanitized;
+}
+/**
+ * Sanitize resource metadata array by removing all identifying information
+ * This is the main privacy layer ensuring no PII or resource identifiers reach the backend
+ * @param resources - Array of resource metadata to sanitize
+ * @returns Sanitization result with safe resources and removed field log
+ */
+function sanitizeResources(resources) {
+    log.debug(`Sanitizing ${resources.length} resource(s)`);
+    const removedFields = new Set();
+    const sanitizedResources = [];
+    for (const resource of resources) {
+        const sanitized = sanitizeSingleResource(resource, removedFields);
+        sanitizedResources.push(sanitized);
+    }
+    const removedFieldsList = Array.from(removedFields).sort();
+    if (removedFieldsList.length > 0) {
+        log.debug(`Removed sensitive fields: ${removedFieldsList.join(', ')}`);
+    }
+    log.debug(`Sanitization complete: ${sanitizedResources.length} resource(s) sanitized`);
+    return {
+        resources: sanitizedResources,
+        resourceCount: sanitizedResources.length,
+        removedFields: removedFieldsList,
+    };
+}
+/**
+ * Recursively scan an object for sensitive data patterns
+ * Used for testing the privacy contract
+ * @param obj - Object to scan
+ * @param path - Current path in object (for violation reporting)
+ * @param violations - Array to collect violations
+ */
+function scanForSensitiveData(obj, path, violations) {
+    if (obj === null || obj === undefined) {
+        return;
+    }
+    // Check strings for sensitive patterns
+    if (typeof obj === 'string') {
+        if (SENSITIVE_PATTERNS.guid.test(obj)) {
+            violations.push(`GUID found at ${path}: ${obj.substring(0, 36)}...`);
+        }
+        if (SENSITIVE_PATTERNS.resourceId.test(obj)) {
+            violations.push(`Resource ID found at ${path}: ${obj.substring(0, 50)}...`);
+        }
+        if (SENSITIVE_PATTERNS.connectionString.test(obj)) {
+            violations.push(`Connection string found at ${path}`);
+        }
+        return;
+    }
+    // Check arrays
+    if (Array.isArray(obj)) {
+        obj.forEach((item, index) => {
+            scanForSensitiveData(item, `${path}[${index}]`, violations);
+        });
+        return;
+    }
+    // Check objects
+    if (typeof obj === 'object') {
+        for (const [key, value] of Object.entries(obj)) {
+            const newPath = path ? `${path}.${key}` : key;
+            // Check if key itself is forbidden
+            if (isForbiddenField(key)) {
+                violations.push(`Forbidden field found: ${newPath}`);
+            }
+            // Recursively check value
+            scanForSensitiveData(value, newPath, violations);
+        }
+    }
+}
+/**
+ * Validate that sanitized data contains no sensitive information
+ * This function is used in tests to ensure the privacy contract is never violated
+ * @param data - Data to validate
+ * @returns Validation result with violations list
+ */
+function validateNoSensitiveData(data) {
+    const violations = [];
+    scanForSensitiveData(data, '', violations);
+    return {
+        valid: violations.length === 0,
+        violations,
+    };
 }
 
 
@@ -30588,10 +31534,48 @@ async function run() {
             return;
         }
         log.info(`${successfulCompilations.length} file(s) compiled successfully, proceeding with analysis`);
-        // TODO: Implement ARM extraction (Task A5)
-        // TODO: Implement sanitization (Task A6)
-        // TODO: Implement backend communication (Task A7)
-        // TODO: Implement PR comment posting (Task A8)
+        // Extract resource metadata from ARM templates
+        const { extractResourceMetadata } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(8476)));
+        const allResources = [];
+        for (const compilation of successfulCompilations) {
+            try {
+                // Convert ARM template object back to JSON string for extraction
+                const armJson = JSON.stringify(compilation.armTemplate);
+                const extractionResult = extractResourceMetadata(armJson);
+                allResources.push(...extractionResult.resources);
+                log.debug(`Extracted ${extractionResult.resourceCount} resource(s) from ${compilation.filePath}`);
+            }
+            catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                log.warning(`Failed to extract resources from ${compilation.filePath}: ${errorMessage}`);
+                // Continue processing other files
+            }
+        }
+        if (allResources.length === 0) {
+            log.info('No resources found in compiled templates. Nothing to analyze.');
+            return;
+        }
+        log.info(`Total resources detected: ${allResources.length}`);
+        // Sanitize resources (privacy layer)
+        const { sanitizeResources } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(8020)));
+        const sanitizationResult = sanitizeResources(allResources);
+        log.info(`Sanitized ${sanitizationResult.resourceCount} resource(s) for analysis`);
+        // Get action inputs
+        const apiKey = core.getInput('api_key') || undefined;
+        const commentMode = (core.getInput('comment_mode') || 'update');
+        // Analyze resources (backend or local fallback)
+        const { analyzeResources } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9325)));
+        const analysisResult = await analyzeResources(sanitizationResult.resources, apiKey, prContext.fullName);
+        log.info(`Analysis completed using ${analysisResult.source} source`);
+        // Format as PR comment
+        const { formatPRComment } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(1990)));
+        const commentBody = formatPRComment(analysisResult);
+        // Post or update PR comment
+        const { createOrUpdateComment } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(6645)));
+        await createOrUpdateComment(octokit, prContext, commentBody, commentMode);
+        // Set action outputs
+        core.setOutput('resources_detected', allResources.length.toString());
+        core.setOutput('analysis_status', 'success');
         log.info('Azure IaC Reviewer completed successfully');
     }
     catch (error) {
@@ -30758,6 +31742,13 @@ const core = __importStar(__nccwpck_require__(7484));
 /**
  * Structured logging utilities for GitHub Actions
  */
+/**
+ * Check if debug mode is enabled via ACTIONS_STEP_DEBUG environment variable
+ * @returns True if debug mode is enabled
+ */
+function isDebugEnabled() {
+    return process.env.ACTIONS_STEP_DEBUG === 'true';
+}
 function info(message) {
     core.info(message);
 }
@@ -30768,7 +31759,11 @@ function error(message) {
     core.error(message);
 }
 function debug(message) {
-    core.debug(message);
+    // Only log debug messages if debug mode is enabled
+    // core.debug already respects this internally, but we can add additional checks if needed
+    if (isDebugEnabled()) {
+        core.debug(message);
+    }
 }
 function group(name, fn) {
     return core.group(name, fn);

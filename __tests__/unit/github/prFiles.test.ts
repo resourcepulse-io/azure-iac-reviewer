@@ -24,6 +24,7 @@ describe('PR Files', () => {
     eventName: 'pull_request',
     sha: 'abc123',
     ref: 'feature-branch',
+    fullName: 'test-owner/test-repo',
   };
 
   const mockChangedFiles = [

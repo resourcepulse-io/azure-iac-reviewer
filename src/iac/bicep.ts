@@ -282,11 +282,29 @@ export function formatCompilationErrors(
   ];
 
   for (const failure of failures) {
+    const errorMessage = failure.error || 'Unknown error';
+    const isLongError = errorMessage.length > 500;
+
     lines.push(`### \`${failure.filePath}\``);
     lines.push('');
-    lines.push('```');
-    lines.push(failure.error || 'Unknown error');
-    lines.push('```');
+
+    if (isLongError) {
+      // Make long errors collapsible
+      lines.push('<details>');
+      lines.push(`<summary>⚠️ Error Details (${errorMessage.length} chars)</summary>`);
+      lines.push('');
+      lines.push('```');
+      lines.push(errorMessage);
+      lines.push('```');
+      lines.push('');
+      lines.push('</details>');
+    } else {
+      // Short errors displayed inline
+      lines.push('```');
+      lines.push(errorMessage);
+      lines.push('```');
+    }
+
     lines.push('');
   }
 

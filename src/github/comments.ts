@@ -1,11 +1,12 @@
 import { Octokit } from '@octokit/rest';
 import * as log from '../utils/log';
 import { PRContext } from './context';
+import { COMMENT_MARKER } from '../format/markdown';
 
 /**
- * Marker comment to identify comments created by this action
+ * NOTE: COMMENT_MARKER is imported from ../format/markdown
+ * to ensure consistency across the codebase
  */
-const COMMENT_MARKER = '<!-- azure-iac-reviewer -->';
 
 /**
  * Find existing comment created by this action
@@ -40,7 +41,7 @@ async function findExistingComment(
  * Create or update a PR comment
  * @param octokit - Authenticated Octokit instance
  * @param context - PR context
- * @param body - Comment body (markdown)
+ * @param body - Comment body (markdown) - should already include marker via formatPRComment()
  * @param mode - Comment mode: 'update' or 'new'
  */
 export async function createOrUpdateComment(
@@ -49,8 +50,8 @@ export async function createOrUpdateComment(
   body: string,
   mode: 'update' | 'new' = 'update'
 ): Promise<void> {
-  // Add marker to comment body
-  const markedBody = `${COMMENT_MARKER}\n${body}`;
+  // Body should already include marker from formatPRComment()
+  // No need to add it again here
 
   try {
     if (mode === 'update') {
@@ -64,7 +65,7 @@ export async function createOrUpdateComment(
           owner: context.owner,
           repo: context.repo,
           comment_id: existingCommentId,
-          body: markedBody,
+          body,
         });
 
         log.info('PR comment updated successfully');
@@ -82,7 +83,7 @@ export async function createOrUpdateComment(
       owner: context.owner,
       repo: context.repo,
       issue_number: context.prNumber,
-      body: markedBody,
+      body,
     });
 
     log.info('PR comment created successfully');

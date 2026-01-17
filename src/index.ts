@@ -58,10 +58,65 @@ async function run(): Promise<void> {
       `${successfulCompilations.length} file(s) compiled successfully, proceeding with analysis`
     );
 
-    // TODO: Implement ARM extraction (Task A5)
-    // TODO: Implement sanitization (Task A6)
-    // TODO: Implement backend communication (Task A7)
-    // TODO: Implement PR comment posting (Task A8)
+    // Extract resource metadata from ARM templates
+    const { extractResourceMetadata } = await import('./iac/armExtract');
+    const allResources = [];
+
+    for (const compilation of successfulCompilations) {
+      try {
+        // Convert ARM template object back to JSON string for extraction
+        const armJson = JSON.stringify(compilation.armTemplate);
+        const extractionResult = extractResourceMetadata(armJson);
+        allResources.push(...extractionResult.resources);
+        log.debug(
+          `Extracted ${extractionResult.resourceCount} resource(s) from ${compilation.filePath}`
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        log.warning(`Failed to extract resources from ${compilation.filePath}: ${errorMessage}`);
+        // Continue processing other files
+      }
+    }
+
+    if (allResources.length === 0) {
+      log.info('No resources found in compiled templates. Nothing to analyze.');
+      return;
+    }
+
+    log.info(`Total resources detected: ${allResources.length}`);
+
+    // Sanitize resources (privacy layer)
+    const { sanitizeResources } = await import('./iac/sanitize');
+    const sanitizationResult = sanitizeResources(allResources);
+    log.info(
+      `Sanitized ${sanitizationResult.resourceCount} resource(s) for analysis`
+    );
+
+    // Get action inputs
+    const apiKey = core.getInput('api_key') || undefined;
+    const commentMode = (core.getInput('comment_mode') || 'update') as 'update' | 'new';
+
+    // Analyze resources (backend or local fallback)
+    const { analyzeResources } = await import('./backend/client');
+    const analysisResult = await analyzeResources(
+      sanitizationResult.resources,
+      apiKey,
+      prContext.fullName
+    );
+
+    log.info(`Analysis completed using ${analysisResult.source} source`);
+
+    // Format as PR comment
+    const { formatPRComment } = await import('./format/markdown');
+    const commentBody = formatPRComment(analysisResult);
+
+    // Post or update PR comment
+    const { createOrUpdateComment } = await import('./github/comments');
+    await createOrUpdateComment(octokit, prContext, commentBody, commentMode);
+
+    // Set action outputs
+    core.setOutput('resources_detected', allResources.length.toString());
+    core.setOutput('analysis_status', 'success');
 
     log.info('Azure IaC Reviewer completed successfully');
   } catch (error) {

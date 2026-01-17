@@ -1,0 +1,138 @@
+# Example GitHub Actions Workflow for Azure IaC Reviewer
+#
+# This workflow demonstrates how to use the Azure IaC Reviewer action
+# to automatically analyze Bicep files in pull requests.
+#
+# Copy this file to .github/workflows/ in your repository to get started.
+
+name: Azure IaC Review
+
+# Trigger on pull requests to main and develop branches
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    # Optional: Only run when Bicep files change
+    # paths:
+    #   - '**.bicep'
+    #   - 'bicep/**'
+
+# Required permissions for the action to function
+permissions:
+  contents: read        # Read repository files and PR context
+  pull-requests: write  # Create and update PR comments
+
+jobs:
+  bicep-review:
+    name: Review Bicep Changes
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository code
+      # This is required so the action can access Bicep files
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Run Azure IaC Reviewer
+      # This will analyze changed Bicep files and post results to the PR
+      - name: Analyze Bicep files
+        uses: resourcepulse-io/azure-iac-reviewer@v1
+        with:
+          # OPTIONAL: Provide API key for enhanced analysis with cost insights
+          # Store your API key as a repository secret (Settings > Secrets > Actions)
+          # Get your API key from: https://resourcepulse.io
+          api_key: ${{ secrets.AZURE_IAC_REVIEWER_API_KEY }}
+
+          # OPTIONAL: Control comment behavior
+          # - 'update' (default): Updates existing comment to avoid spam
+          # - 'new': Creates a new comment for each workflow run
+          comment_mode: 'update'
+
+# ============================================================================
+# Configuration Examples
+# ============================================================================
+
+# Example 1: Minimal configuration (no API key, local analysis only)
+# - uses: resourcepulse-io/azure-iac-reviewer@v1
+
+# Example 2: With API key for enhanced analysis
+# - uses: resourcepulse-io/azure-iac-reviewer@v1
+#   with:
+#     api_key: ${{ secrets.AZURE_IAC_REVIEWER_API_KEY }}
+
+# Example 3: Create new comment each time (useful for auditing)
+# - uses: resourcepulse-io/azure-iac-reviewer@v1
+#   with:
+#     api_key: ${{ secrets.AZURE_IAC_REVIEWER_API_KEY }}
+#     comment_mode: 'new'
+
+# ============================================================================
+# Advanced Usage
+# ============================================================================
+
+# You can access the action outputs in subsequent steps:
+#
+# - name: Analyze Bicep files
+#   id: bicep-review
+#   uses: resourcepulse-io/azure-iac-reviewer@v1
+#   with:
+#     api_key: ${{ secrets.AZURE_IAC_REVIEWER_API_KEY }}
+#
+# - name: Check results
+#   run: |
+#     echo "Resources detected: ${{ steps.bicep-review.outputs.resources_detected }}"
+#     echo "Analysis status: ${{ steps.bicep-review.outputs.analysis_status }}"
+#
+# - name: Fail on analysis failure
+#   if: steps.bicep-review.outputs.analysis_status == 'failed'
+#   run: |
+#     echo "Bicep analysis failed!"
+#     exit 1
+
+# ============================================================================
+# Privacy and Security
+# ============================================================================
+
+# This action is designed with privacy as a core principle:
+# - Your Bicep source code is NEVER transmitted to the backend
+# - Resource names, IDs, and tag values are NEVER sent
+# - Only anonymized metadata is transmitted (types, SKUs, regions, counts)
+# - Works completely offline without an API key (local analysis mode)
+#
+# For more details, see: SECURITY.md
+
+# ============================================================================
+# Troubleshooting
+# ============================================================================
+
+# If the action doesn't post a comment:
+# 1. Ensure the workflow triggers on 'pull_request' (not 'push')
+# 2. Check that 'pull-requests: write' permission is granted
+# 3. Verify at least one .bicep file was changed in the PR
+#
+# If you see compilation errors:
+# 1. Fix the Bicep syntax errors shown in the PR comment
+# 2. The action will continue analyzing other valid files
+#
+# If the backend is unavailable:
+# 1. The action will automatically fall back to local analysis
+# 2. You'll still get basic insights without the backend connection
+
+# ============================================================================
+# Multiple Workflows
+# ============================================================================
+
+# You can run this action in multiple workflows for different purposes:
+#
+# 1. Quick feedback on draft PRs (no API key):
+#    - Trigger: pull_request (types: opened, synchronize)
+#    - No api_key for fast local analysis
+#
+# 2. Detailed review before merge (with API key):
+#    - Trigger: pull_request (types: ready_for_review)
+#    - Include api_key for comprehensive analysis
+#
+# 3. Security review workflow:
+#    - Trigger: pull_request_target (for external contributors)
+#    - Use stricter permissions and approval gates

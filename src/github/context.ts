@@ -12,6 +12,7 @@ export interface PRContext {
   eventName: string;
   sha: string;
   ref: string;
+  fullName: string; // owner/repo format (e.g., "myorg/myrepo")
 }
 
 /**
@@ -89,7 +90,9 @@ export function parsePRContext(): PRContext {
     );
   }
 
-  log.info(`Detected PR #${prNumber} in ${owner}/${repo}`);
+  const fullName = `${owner}/${repo}`;
+
+  log.info(`Detected PR #${prNumber} in ${fullName}`);
   log.debug(`PR head SHA: ${sha}`);
   log.debug(`PR head ref: ${ref}`);
 
@@ -100,6 +103,7 @@ export function parsePRContext(): PRContext {
     eventName,
     sha,
     ref,
+    fullName,
   };
 }
 

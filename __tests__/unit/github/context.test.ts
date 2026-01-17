@@ -60,6 +60,7 @@ describe('GitHub Context', () => {
         eventName: 'pull_request',
         sha: 'abc123',
         ref: 'feature-branch',
+        fullName: 'test-owner/test-repo',
       });
 
       expect(mockFs.readFileSync).toHaveBeenCalledWith('/path/to/event.json', 'utf8');
@@ -198,6 +199,7 @@ describe('GitHub Context', () => {
         eventName: 'pull_request',
         sha: 'abc123',
         ref: 'feature-branch',
+        fullName: 'test-owner/test-repo',
       });
 
       expect(octokit).toBeDefined();
