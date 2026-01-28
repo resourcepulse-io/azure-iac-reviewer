@@ -2,9 +2,9 @@ import * as log from '../utils/log';
 import { SanitizedResource, validateNoSensitiveData } from '../iac/sanitize';
 
 /**
- * Backend API URL - hardcoded and non-configurable by users
+ * Default backend API URL
  */
-const BACKEND_URL = 'https://api.resourcepulse.io';
+const DEFAULT_BACKEND_URL = 'https://api.resourcepulse.io';
 
 /**
  * Result of the analysis operation
@@ -18,23 +18,66 @@ export interface AnalysisResult {
 /**
  * Repository metadata included in backend request
  */
-interface RepositoryInfo {
+export interface RepositoryInfo {
+  owner: string;
+  name: string;
   fullName: string; // owner/repo format (e.g., "myorg/myrepo")
 }
 
 /**
- * Request payload sent to backend
+ * Pull request metadata for backend request
+ */
+export interface PRInfo {
+  number: number;
+  title: string;
+  author: string;
+  baseBranch: string;
+}
+
+/**
+ * GitHub Actions run metadata for backend request
+ */
+export interface RunInfo {
+  id: string;
+  url: string;
+}
+
+/**
+ * Git context for backend request
+ */
+export interface ContextInfo {
+  sha: string;
+  ref: string;
+}
+
+/**
+ * API resource format - matches backend contract
+ */
+export interface ApiResource {
+  kind: string;
+  region?: string;
+  sku?: string;
+  count: number;
+  change: string;
+}
+
+/**
+ * Request payload sent to backend - matches API contract
  */
 interface AnalysisRequest {
-  resources: SanitizedResource[];
-  repo?: RepositoryInfo;
-  timestamp?: string;
+  repo: RepositoryInfo;
+  pr: PRInfo;
+  run: RunInfo;
+  context: ContextInfo;
+  resources: ApiResource[];
 }
 
 /**
  * Backend response format
  */
 interface BackendResponse {
+  success?: boolean;
+  source?: string;
   markdown?: string;
   message?: string;
   error?: string;
@@ -143,18 +186,43 @@ function formatKindLabel(kind: string): string {
 }
 
 /**
+ * Full context for backend API call
+ */
+export interface BackendCallContext {
+  repo: RepositoryInfo;
+  pr: PRInfo;
+  run: RunInfo;
+  context: ContextInfo;
+}
+
+/**
+ * Convert SanitizedResource to ApiResource format
+ * @param resource - Sanitized resource
+ * @returns API-compatible resource
+ */
+function toApiResource(resource: SanitizedResource): ApiResource {
+  return {
+    kind: resource.kind,
+    region: resource.region,
+    sku: resource.sku,
+    count: resource.count,
+    change: resource.change,
+  };
+}
+
+/**
  * Call backend API with timeout and error handling
  * @param resources - Sanitized resources to analyze
  * @param apiKey - Backend authentication token
  * @param backendUrl - Backend API endpoint
- * @param repoInfo - Optional repository metadata
+ * @param callContext - Full context including repo, PR, run, and git context
  * @returns Backend response or null if failed
  */
 async function callBackend(
   resources: SanitizedResource[],
   apiKey: string,
   backendUrl: string,
-  repoInfo?: RepositoryInfo
+  callContext: BackendCallContext
 ): Promise<BackendResponse | null> {
   // Validate no sensitive data before sending
   const validation = validateNoSensitiveData(resources);
@@ -166,21 +234,21 @@ async function callBackend(
     );
   }
 
-  const requestPayload: AnalysisRequest = {
-    resources,
-    timestamp: new Date().toISOString(),
-  };
+  // Convert to API resource format
+  const apiResources = resources.map(toApiResource);
 
-  // Include repository info if provided
-  if (repoInfo) {
-    requestPayload.repo = repoInfo;
-  }
+  const requestPayload: AnalysisRequest = {
+    repo: callContext.repo,
+    pr: callContext.pr,
+    run: callContext.run,
+    context: callContext.context,
+    resources: apiResources,
+  };
 
   log.debug(`Calling backend API: ${backendUrl}`);
   log.debug(`Sending ${resources.length} sanitized resource(s)`);
-  if (repoInfo) {
-    log.debug(`Repository: ${repoInfo.fullName}`);
-  }
+  log.debug(`Repository: ${callContext.repo.fullName}`);
+  log.debug(`PR #${callContext.pr.number}: ${callContext.pr.title}`);
 
   try {
     // Create AbortController for timeout
@@ -246,19 +314,31 @@ async function callBackend(
 }
 
 /**
+ * Options for resource analysis
+ */
+export interface AnalyzeOptions {
+  apiKey?: string;
+  serverAddress?: string;
+  callContext?: BackendCallContext;
+}
+
+/**
  * Analyze resources using backend service or local fallback
  * This is the main entry point for backend integration
  * @param resources - Sanitized resources to analyze
- * @param apiKey - Optional backend authentication token
- * @param repoFullName - Optional repository full name (owner/repo format)
+ * @param options - Analysis options including API key, server address, and context
  * @returns Analysis result with markdown message
  */
 export async function analyzeResources(
   resources: SanitizedResource[],
-  apiKey?: string,
-  repoFullName?: string
+  options: AnalyzeOptions = {}
 ): Promise<AnalysisResult> {
+  const { apiKey, serverAddress, callContext } = options;
+  const backendUrl = serverAddress || DEFAULT_BACKEND_URL;
+
   log.debug('Starting resource analysis');
+  log.debug(`API key provided: ${apiKey ? 'yes' : 'no'}`);
+  log.debug(`Server address: ${backendUrl}`);
 
   // If no API key provided, use local fallback immediately
   if (!apiKey) {
@@ -271,30 +351,50 @@ export async function analyzeResources(
     };
   }
 
-  // Try to call backend using the hardcoded BACKEND_URL
-  log.info(`Attempting backend analysis at ${BACKEND_URL}`);
+  // If no call context provided, use local fallback
+  if (!callContext) {
+    log.warning('No call context provided - using local fallback analysis');
+    const markdown = generateLocalFallback(resources);
+    return {
+      success: true,
+      source: 'local',
+      markdown,
+    };
+  }
 
-  // Prepare repository info if provided
-  const repoInfo: RepositoryInfo | undefined = repoFullName
-    ? { fullName: repoFullName }
-    : undefined;
+  // Try to call backend
+  log.info(`Attempting backend analysis at ${backendUrl}`);
 
   const backendResponse = await callBackend(
     resources,
     apiKey,
-    BACKEND_URL,
-    repoInfo
+    backendUrl,
+    callContext
   );
 
-  // If backend succeeded, return its response
-  if (backendResponse && (backendResponse.markdown || backendResponse.message)) {
-    log.info('Backend analysis completed successfully');
-    const markdown = backendResponse.markdown || backendResponse.message || '';
-    return {
-      success: true,
-      source: 'backend',
-      markdown,
-    };
+  // Check if backend response indicates success
+  if (backendResponse) {
+    // Respect the success flag from the API response
+    if (backendResponse.success === false) {
+      log.warning('Backend returned success=false - falling back to local summary');
+      const markdown = generateLocalFallback(resources);
+      return {
+        success: false,
+        source: 'local',
+        markdown,
+      };
+    }
+
+    // Backend succeeded - return its response
+    if (backendResponse.markdown || backendResponse.message) {
+      log.info('Backend analysis completed successfully');
+      const markdown = backendResponse.markdown || backendResponse.message || '';
+      return {
+        success: true,
+        source: 'backend',
+        markdown,
+      };
+    }
   }
 
   // Backend failed - use local fallback

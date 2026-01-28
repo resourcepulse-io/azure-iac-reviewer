@@ -1,13 +1,19 @@
 import { ResourceMetadata } from './armExtract';
 /**
+ * Change type for resources - matches API contract
+ */
+export type ResourceChangeType = 'added' | 'modified' | 'removed';
+/**
  * Sanitized resource data safe for transmission to backend
  * Only contains non-identifying metadata
  */
 export interface SanitizedResource {
-    type: string;
     kind: string;
-    sku?: string;
     region?: string;
+    sku?: string;
+    count: number;
+    change: ResourceChangeType;
+    type?: string;
     apiVersion?: string;
     safeProperties?: Record<string, unknown>;
 }
@@ -30,9 +36,19 @@ export interface ValidationResult {
  * Sanitize resource metadata array by removing all identifying information
  * This is the main privacy layer ensuring no PII or resource identifiers reach the backend
  * @param resources - Array of resource metadata to sanitize
+ * @param change - Default change type for all resources (can be overridden per-resource)
  * @returns Sanitization result with safe resources and removed field log
  */
-export declare function sanitizeResources(resources: ResourceMetadata[]): SanitizationResult;
+export declare function sanitizeResources(resources: ResourceMetadata[], change?: ResourceChangeType): SanitizationResult;
+/**
+ * Sanitize resources with individual change types
+ * @param resourcesWithChange - Array of [resource, changeType] tuples
+ * @returns Sanitization result with safe resources and removed field log
+ */
+export declare function sanitizeResourcesWithChanges(resourcesWithChange: Array<{
+    resource: ResourceMetadata;
+    change: ResourceChangeType;
+}>): SanitizationResult;
 /**
  * Validate that sanitized data contains no sensitive information
  * This function is used in tests to ensure the privacy contract is never violated

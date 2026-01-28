@@ -8,12 +8,69 @@ export interface AnalysisResult {
     markdown: string;
 }
 /**
+ * Repository metadata included in backend request
+ */
+export interface RepositoryInfo {
+    owner: string;
+    name: string;
+    fullName: string;
+}
+/**
+ * Pull request metadata for backend request
+ */
+export interface PRInfo {
+    number: number;
+    title: string;
+    author: string;
+    baseBranch: string;
+}
+/**
+ * GitHub Actions run metadata for backend request
+ */
+export interface RunInfo {
+    id: string;
+    url: string;
+}
+/**
+ * Git context for backend request
+ */
+export interface ContextInfo {
+    sha: string;
+    ref: string;
+}
+/**
+ * API resource format - matches backend contract
+ */
+export interface ApiResource {
+    kind: string;
+    region?: string;
+    sku?: string;
+    count: number;
+    change: string;
+}
+/**
+ * Full context for backend API call
+ */
+export interface BackendCallContext {
+    repo: RepositoryInfo;
+    pr: PRInfo;
+    run: RunInfo;
+    context: ContextInfo;
+}
+/**
+ * Options for resource analysis
+ */
+export interface AnalyzeOptions {
+    apiKey?: string;
+    serverAddress?: string;
+    callContext?: BackendCallContext;
+}
+/**
  * Analyze resources using backend service or local fallback
  * This is the main entry point for backend integration
  * @param resources - Sanitized resources to analyze
- * @param apiKey - Optional backend authentication token
- * @param repoFullName - Optional repository full name (owner/repo format)
+ * @param options - Analysis options including API key, server address, and context
  * @returns Analysis result with markdown message
  */
-export declare function analyzeResources(resources: SanitizedResource[], apiKey?: string, repoFullName?: string): Promise<AnalysisResult>;
+export declare function analyzeResources(resources: SanitizedResource[], options?: AnalyzeOptions): Promise<AnalysisResult>;
 //# sourceMappingURL=client.d.ts.map

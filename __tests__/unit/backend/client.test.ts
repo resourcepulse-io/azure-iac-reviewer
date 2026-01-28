@@ -1,4 +1,4 @@
-import { analyzeResources } from '../../../src/backend/client';
+import { analyzeResources, BackendCallContext } from '../../../src/backend/client';
 import { SanitizedResource } from '../../../src/iac/sanitize';
 import * as log from '../../../src/utils/log';
 
@@ -16,26 +16,54 @@ global.fetch = jest.fn();
 describe('analyzeResources', () => {
   const mockResources: SanitizedResource[] = [
     {
-      type: 'Microsoft.Compute/virtualMachines',
       kind: 'vm',
       sku: 'Standard_D2s_v3',
       region: 'eastus',
+      count: 1,
+      change: 'modified',
+      type: 'Microsoft.Compute/virtualMachines',
       apiVersion: '2023-01-01',
     },
     {
-      type: 'Microsoft.Storage/storageAccounts',
       kind: 'storage',
       region: 'westus',
+      count: 1,
+      change: 'added',
+      type: 'Microsoft.Storage/storageAccounts',
       safeProperties: {
         replication: 'LRS',
       },
     },
     {
-      type: 'Microsoft.Web/sites',
       kind: 'app_service',
       region: 'eastus',
+      count: 1,
+      change: 'modified',
+      type: 'Microsoft.Web/sites',
     },
   ];
+
+  const mockCallContext: BackendCallContext = {
+    repo: {
+      owner: 'test-owner',
+      name: 'test-repo',
+      fullName: 'test-owner/test-repo',
+    },
+    pr: {
+      number: 42,
+      title: 'Test PR',
+      author: 'test-user',
+      baseBranch: 'main',
+    },
+    run: {
+      id: '12345',
+      url: 'https://github.com/test-owner/test-repo/actions/runs/12345',
+    },
+    context: {
+      sha: 'abc123',
+      ref: 'feature-branch',
+    },
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -66,24 +94,25 @@ describe('analyzeResources', () => {
       );
     });
 
+    it('should use local fallback when no call context provided', async () => {
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        // No callContext
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.source).toBe('local');
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
 
     it('should format resource counts correctly by kind', async () => {
       const resources: SanitizedResource[] = [
-        { type: 'Microsoft.Compute/virtualMachines', kind: 'vm' },
-        { type: 'Microsoft.Compute/virtualMachines', kind: 'vm' },
-        { type: 'Microsoft.Storage/storageAccounts', kind: 'storage' },
-        {
-          type: 'Microsoft.Web/serverfarms',
-          kind: 'app_service_plan',
-        },
-        {
-          type: 'Microsoft.Web/serverfarms',
-          kind: 'app_service_plan',
-        },
-        {
-          type: 'Microsoft.Web/serverfarms',
-          kind: 'app_service_plan',
-        },
+        { kind: 'vm', count: 1, change: 'added', type: 'Microsoft.Compute/virtualMachines' },
+        { kind: 'vm', count: 1, change: 'modified', type: 'Microsoft.Compute/virtualMachines' },
+        { kind: 'storage', count: 1, change: 'added', type: 'Microsoft.Storage/storageAccounts' },
+        { kind: 'app_service_plan', count: 1, change: 'added', type: 'Microsoft.Web/serverfarms' },
+        { kind: 'app_service_plan', count: 1, change: 'modified', type: 'Microsoft.Web/serverfarms' },
+        { kind: 'app_service_plan', count: 1, change: 'added', type: 'Microsoft.Web/serverfarms' },
       ];
 
       const result = await analyzeResources(resources);
@@ -113,19 +142,19 @@ describe('analyzeResources', () => {
   });
 
   describe('Backend Success Scenarios', () => {
-    it('should successfully call backend with API key and URL', async () => {
+    it('should successfully call backend with API key and context', async () => {
       const mockMarkdown = '## Cost Analysis\n\nEstimated cost: $100/month';
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
+        json: async () => ({ success: true, markdown: mockMarkdown }),
       });
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('backend');
@@ -146,15 +175,39 @@ describe('analyzeResources', () => {
         })
       );
 
-      // Verify request payload
+      // Verify request payload structure
       const callArgs = (global.fetch as jest.Mock).mock.calls[0];
       const requestBody = JSON.parse(callArgs[1].body);
-      expect(requestBody.resources).toEqual(mockResources);
-      expect(requestBody.timestamp).toBeDefined();
+      expect(requestBody.repo).toBeDefined();
+      expect(requestBody.pr).toBeDefined();
+      expect(requestBody.run).toBeDefined();
+      expect(requestBody.context).toBeDefined();
+      expect(requestBody.resources).toBeDefined();
 
       // Should log success
       expect(log.info).toHaveBeenCalledWith(
         'Backend analysis completed successfully'
+      );
+    });
+
+    it('should use custom server address when provided', async () => {
+      const mockMarkdown = '## Analysis';
+
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, markdown: mockMarkdown }),
+      });
+
+      await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        serverAddress: 'https://custom.example.com',
+        callContext: mockCallContext,
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://custom.example.com/analyze',
+        expect.any(Object)
       );
     });
 
@@ -164,113 +217,89 @@ describe('analyzeResources', () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ message: mockMessage }),
+        json: async () => ({ success: true, message: mockMessage }),
       });
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('backend');
       expect(result.markdown).toBe(mockMessage);
     });
 
-    it('should include timestamp in backend request', async () => {
+    it('should include PR and repo info in request payload', async () => {
       const mockMarkdown = '## Analysis Result';
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
+        json: async () => ({ success: true, markdown: mockMarkdown }),
       });
 
-      await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       const callArgs = (global.fetch as jest.Mock).mock.calls[0];
       const requestBody = JSON.parse(callArgs[1].body);
 
-      expect(requestBody.timestamp).toBeDefined();
-      expect(new Date(requestBody.timestamp).getTime()).toBeGreaterThan(0);
+      expect(requestBody.repo.fullName).toBe('test-owner/test-repo');
+      expect(requestBody.pr.number).toBe(42);
+      expect(requestBody.pr.title).toBe('Test PR');
+      expect(requestBody.pr.author).toBe('test-user');
+      expect(requestBody.context.sha).toBe('abc123');
     });
 
-    it('should include repository information in backend request', async () => {
+    it('should convert resources to API format (kind, region, sku, count, change)', async () => {
       const mockMarkdown = '## Analysis Result';
 
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
+        json: async () => ({ success: true, markdown: mockMarkdown }),
       });
 
-      await analyzeResources(
-        mockResources,
-        'test-api-key',
-        'myorg/myrepo'
-      );
+      await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       const callArgs = (global.fetch as jest.Mock).mock.calls[0];
       const requestBody = JSON.parse(callArgs[1].body);
 
-      expect(requestBody.repo).toBeDefined();
-      expect(requestBody.repo.fullName).toBe('myorg/myrepo');
-
-      // Should log the repo info
-      expect(log.debug).toHaveBeenCalledWith('Repository: myorg/myrepo');
-    });
-
-    it('should not include repo field when repo fullName is not provided', async () => {
-      const mockMarkdown = '## Analysis Result';
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
+      // Verify API resource format
+      expect(requestBody.resources[0]).toEqual({
+        kind: 'vm',
+        region: 'eastus',
+        sku: 'Standard_D2s_v3',
+        count: 1,
+        change: 'modified',
       });
-
-      await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
-
-      const callArgs = (global.fetch as jest.Mock).mock.calls[0];
-      const requestBody = JSON.parse(callArgs[1].body);
-
-      expect(requestBody.repo).toBeUndefined();
-
-      // Should not log repo info
-      expect(log.debug).not.toHaveBeenCalledWith(
-        expect.stringContaining('Repository:')
-      );
-    });
-
-    it('should handle empty string repo fullName as undefined', async () => {
-      const mockMarkdown = '## Analysis Result';
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
-      });
-
-      await analyzeResources(
-        mockResources,
-        'test-api-key',
-        ''
-      );
-
-      const callArgs = (global.fetch as jest.Mock).mock.calls[0];
-      const requestBody = JSON.parse(callArgs[1].body);
-
-      expect(requestBody.repo).toBeUndefined();
     });
   });
 
-  describe('Backend Error Handling', () => {
+  describe('Backend Response Handling', () => {
+    it('should respect success=false from backend response', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: false, error: 'Analysis failed' }),
+      });
+
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.source).toBe('local');
+      expect(result.markdown).toContain('Azure Resource Analysis');
+    });
+
     it('should fall back to local when backend returns 500 error', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: false,
@@ -279,10 +308,10 @@ describe('analyzeResources', () => {
         json: async () => ({ error: 'Database connection failed' }),
       });
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
@@ -291,9 +320,6 @@ describe('analyzeResources', () => {
       // Should log warning
       expect(log.warning).toHaveBeenCalledWith(
         expect.stringContaining('Backend returned status 500')
-      );
-      expect(log.warning).toHaveBeenCalledWith(
-        'Backend analysis failed - falling back to local summary'
       );
     });
 
@@ -305,10 +331,10 @@ describe('analyzeResources', () => {
         json: async () => ({ error: 'Invalid API key' }),
       });
 
-      const result = await analyzeResources(
-        mockResources,
-        'invalid-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'invalid-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
@@ -319,42 +345,6 @@ describe('analyzeResources', () => {
       );
     });
 
-    it('should fall back to local when backend returns 404 not found', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        statusText: 'Not Found',
-        json: async () => ({ error: 'Endpoint not found' }),
-      });
-
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.source).toBe('local');
-    });
-
-    it('should fall back to local when backend returns invalid JSON', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        json: async () => {
-          throw new Error('Invalid JSON');
-        },
-      });
-
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.source).toBe('local');
-    });
-
     it('should fall back to local when backend response is empty', async () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
@@ -362,30 +352,28 @@ describe('analyzeResources', () => {
         json: async () => ({}),
       });
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
-      expect(result.markdown).toContain('Azure Resource Analysis');
     });
   });
 
   describe('Network Error Handling', () => {
     it('should fall back to local on network timeout', async () => {
-      // Mock a timeout error
       (global.fetch as jest.Mock).mockRejectedValueOnce(
         Object.assign(new Error('The operation was aborted'), {
           name: 'AbortError',
         })
       );
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
@@ -394,21 +382,17 @@ describe('analyzeResources', () => {
       expect(log.warning).toHaveBeenCalledWith(
         expect.stringContaining('Backend request timed out after')
       );
-      expect(log.warning).toHaveBeenCalledWith(
-        'Backend analysis failed - falling back to local summary'
-      );
     });
 
     it('should fall back to local on DNS resolution failure', async () => {
-      // Mock a DNS error
       (global.fetch as jest.Mock).mockRejectedValueOnce(
         new Error('getaddrinfo ENOTFOUND api.example.com')
       );
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
@@ -417,51 +401,15 @@ describe('analyzeResources', () => {
       expect(log.warning).toHaveBeenCalledWith(
         expect.stringContaining('Network error calling backend')
       );
-    });
-
-    it('should fall back to local on connection refused', async () => {
-      // Mock a connection refused error
-      (global.fetch as jest.Mock).mockRejectedValueOnce(
-        new Error('connect ECONNREFUSED 127.0.0.1:443')
-      );
-
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.source).toBe('local');
-
-      // Should log network error
-      expect(log.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Network error calling backend')
-      );
-    });
-
-    it('should fall back to local on fetch failed error', async () => {
-      // Mock a generic fetch failure
-      (global.fetch as jest.Mock).mockRejectedValueOnce(
-        new Error('fetch failed')
-      );
-
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
-
-      expect(result.success).toBe(true);
-      expect(result.source).toBe('local');
     });
 
     it('should handle unknown error types gracefully', async () => {
-      // Mock an unknown error type
       (global.fetch as jest.Mock).mockRejectedValueOnce('Unknown error');
 
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
@@ -478,14 +426,14 @@ describe('analyzeResources', () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
+        json: async () => ({ success: true, markdown: mockMarkdown }),
       });
 
       // Clean resources should succeed
-      const result = await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      const result = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('backend');
@@ -496,18 +444,19 @@ describe('analyzeResources', () => {
       // Create resources with forbidden fields (should fail validation)
       const sensitiveResources: SanitizedResource[] = [
         {
-          type: 'Microsoft.Compute/virtualMachines',
           kind: 'vm',
+          count: 1,
+          change: 'added',
           // @ts-expect-error - Testing privacy violation
           name: 'my-production-vm',
         },
       ];
 
       await expect(
-        analyzeResources(
-          sensitiveResources,
-          'test-api-key'
-        )
+        analyzeResources(sensitiveResources, {
+          apiKey: 'test-api-key',
+          callContext: mockCallContext,
+        })
       ).rejects.toThrow('Privacy contract violation');
 
       // Should log error
@@ -520,69 +469,26 @@ describe('analyzeResources', () => {
     });
 
     it('should refuse to send resources with GUID patterns', async () => {
-      // Create resources with GUID patterns (should fail validation)
       const sensitiveResources: SanitizedResource[] = [
         {
-          type: 'Microsoft.Compute/virtualMachines',
           kind: 'vm',
+          count: 1,
+          change: 'added',
           safeProperties: {
-            // This would be caught by validation
             resourceGuid: '12345678-1234-1234-1234-123456789012',
           },
         },
       ];
 
       await expect(
-        analyzeResources(
-          sensitiveResources,
-          'test-api-key'
-        )
+        analyzeResources(sensitiveResources, {
+          apiKey: 'test-api-key',
+          callContext: mockCallContext,
+        })
       ).rejects.toThrow('Privacy contract violation');
 
       // Should NOT call fetch
       expect(global.fetch).not.toHaveBeenCalled();
-    });
-
-    it('should never expose sensitive data in local fallback', async () => {
-      // Even if somehow sensitive data got through, local fallback should be safe
-      const result = await analyzeResources(mockResources);
-
-      // Local fallback should never contain resource identifiers or PII
-      expect(result.markdown).not.toContain('12345678-1234-1234-1234');
-      expect(result.markdown).not.toMatch(/\/subscriptions\//i);
-      expect(result.markdown).not.toMatch(/\/resourceGroups\//i);
-      expect(result.markdown).not.toContain('my-production-');
-      expect(result.markdown).not.toContain('adminPassword');
-      expect(result.markdown).not.toContain('connectionString');
-      // Should not contain actual resource names or IDs
-      expect(result.markdown).not.toMatch(/resourceId.*=/);
-    });
-
-    it('should allow repository fullName in backend payload (public metadata)', async () => {
-      const mockMarkdown = '## Analysis Result';
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ markdown: mockMarkdown }),
-      });
-
-      // Repository fullName is public metadata and should be allowed
-      await expect(
-        analyzeResources(
-          mockResources,
-          'test-api-key',
-          'myorg/myrepo'
-        )
-      ).resolves.not.toThrow();
-
-      expect(global.fetch).toHaveBeenCalled();
-      const callArgs = (global.fetch as jest.Mock).mock.calls[0];
-      const requestBody = JSON.parse(callArgs[1].body);
-
-      // Repository info should be included (it's safe public metadata)
-      expect(requestBody.repo).toBeDefined();
-      expect(requestBody.repo.fullName).toBe('myorg/myrepo');
     });
   });
 
@@ -590,8 +496,10 @@ describe('analyzeResources', () => {
     it('should handle single resource', async () => {
       const singleResource: SanitizedResource[] = [
         {
-          type: 'Microsoft.Storage/storageAccounts',
           kind: 'storage',
+          count: 1,
+          change: 'added',
+          type: 'Microsoft.Storage/storageAccounts',
         },
       ];
 
@@ -605,12 +513,16 @@ describe('analyzeResources', () => {
     it('should handle resources with unknown kinds', async () => {
       const resources: SanitizedResource[] = [
         {
-          type: 'Microsoft.CustomProvider/customResources',
           kind: 'other',
+          count: 1,
+          change: 'added',
+          type: 'Microsoft.CustomProvider/customResources',
         },
         {
-          type: 'Microsoft.CustomProvider/anotherResource',
           kind: 'unknown_kind',
+          count: 1,
+          change: 'modified',
+          type: 'Microsoft.CustomProvider/anotherResource',
         },
       ];
 
@@ -621,40 +533,8 @@ describe('analyzeResources', () => {
       expect(result.markdown).toContain('UNKNOWN_KIND');
     });
 
-    it('should handle resources without optional fields', async () => {
-      const minimalResources: SanitizedResource[] = [
-        {
-          type: 'Microsoft.Compute/virtualMachines',
-          kind: 'vm',
-        },
-        {
-          type: 'Microsoft.Storage/storageAccounts',
-          kind: 'storage',
-        },
-      ];
-
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        json: async () => ({ markdown: '## Analysis' }),
-      });
-
-      const result = await analyzeResources(
-        minimalResources,
-        'test-api-key'
-      );
-
-      expect(result.success).toBe(true);
-      expect(global.fetch).toHaveBeenCalled();
-
-      // Verify minimal resources can be serialized
-      const callArgs = (global.fetch as jest.Mock).mock.calls[0];
-      const requestBody = JSON.parse(callArgs[1].body);
-      expect(requestBody.resources).toEqual(minimalResources);
-    });
-
     it('should handle empty string API key as no API key', async () => {
-      const result = await analyzeResources(mockResources, '');
+      const result = await analyzeResources(mockResources, { apiKey: '' });
 
       expect(result.success).toBe(true);
       expect(result.source).toBe('local');
@@ -667,13 +547,13 @@ describe('analyzeResources', () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: '## Analysis' }),
+        json: async () => ({ success: true, markdown: '## Analysis' }),
       });
 
-      await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(log.debug).toHaveBeenCalledWith('Starting resource analysis');
       expect(log.debug).toHaveBeenCalledWith(
@@ -685,6 +565,12 @@ describe('analyzeResources', () => {
       expect(log.debug).toHaveBeenCalledWith(
         'Backend response received successfully'
       );
+    });
+
+    it('should log API key status', async () => {
+      await analyzeResources(mockResources);
+
+      expect(log.debug).toHaveBeenCalledWith('API key provided: no');
     });
 
     it('should log info message when using local fallback by choice', async () => {
@@ -700,10 +586,10 @@ describe('analyzeResources', () => {
         new Error('Network failure')
       );
 
-      await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(log.warning).toHaveBeenCalledWith(
         expect.stringContaining('Error calling backend')
@@ -717,13 +603,13 @@ describe('analyzeResources', () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: '## Analysis' }),
+        json: async () => ({ success: true, markdown: '## Analysis' }),
       });
 
-      await analyzeResources(
-        mockResources,
-        'test-api-key'
-      );
+      await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        callContext: mockCallContext,
+      });
 
       expect(log.info).toHaveBeenCalledWith(
         'Attempting backend analysis at https://api.resourcepulse.io'

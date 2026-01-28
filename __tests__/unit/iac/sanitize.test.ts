@@ -733,6 +733,8 @@ describe('sanitizeResources', () => {
       expect(result.resources[0]).toEqual({
         type: 'Microsoft.Storage/storageAccounts',
         kind: 'storage',
+        count: 1,
+        change: 'modified',
       });
     });
 

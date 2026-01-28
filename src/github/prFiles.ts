@@ -14,6 +14,39 @@ export interface ChangedFile {
 }
 
 /**
+ * Change type for resources - maps to API contract
+ */
+export type ChangeType = 'added' | 'modified' | 'removed';
+
+/**
+ * Bicep file with its change status
+ */
+export interface BicepFileWithStatus {
+  filename: string;
+  change: ChangeType;
+}
+
+/**
+ * Map GitHub file status to API change type
+ * @param status - GitHub file status
+ * @returns Normalized change type
+ */
+function mapFileStatusToChangeType(status: string): ChangeType {
+  switch (status) {
+    case 'added':
+      return 'added';
+    case 'removed':
+      return 'removed';
+    case 'modified':
+    case 'changed':
+    case 'renamed':
+    case 'copied':
+    default:
+      return 'modified';
+  }
+}
+
+/**
  * List all files changed in a pull request
  * @param octokit - Authenticated Octokit instance
  * @param context - PR context with owner, repo, and PR number
@@ -79,6 +112,29 @@ export function filterFilesByExtension(
 }
 
 /**
+ * Filter files by extension and include change status
+ * @param files - Array of changed files
+ * @param extension - File extension to filter by (with or without leading dot)
+ * @returns Filtered array of files with change status
+ */
+export function filterFilesByExtensionWithStatus(
+  files: ChangedFile[],
+  extension: string
+): BicepFileWithStatus[] {
+  // Normalize extension to always have leading dot and lowercase
+  const normalizedExt = (
+    extension.startsWith('.') ? extension : `.${extension}`
+  ).toLowerCase();
+
+  return files
+    .filter((file) => file.filename.toLowerCase().endsWith(normalizedExt))
+    .map((file) => ({
+      filename: file.filename,
+      change: mapFileStatusToChangeType(file.status),
+    }));
+}
+
+/**
  * List changed .bicep files in a pull request
  * @param octokit - Authenticated Octokit instance
  * @param context - PR context with owner, repo, and PR number
@@ -100,6 +156,34 @@ export async function listBicepFiles(
     log.info(`Detected ${bicepFiles.length} .bicep file(s):`);
     bicepFiles.forEach((file) => {
       log.info(`  - ${file}`);
+    });
+  }
+
+  return bicepFiles;
+}
+
+/**
+ * List changed .bicep files in a pull request with their change status
+ * @param octokit - Authenticated Octokit instance
+ * @param context - PR context with owner, repo, and PR number
+ * @returns Array of .bicep files with change status
+ * @throws Error if API call fails
+ */
+export async function listBicepFilesWithStatus(
+  octokit: Octokit,
+  context: PRContext
+): Promise<BicepFileWithStatus[]> {
+  log.info('Detecting changed .bicep files in PR with status');
+
+  const allFiles = await listChangedFiles(octokit, context);
+  const bicepFiles = filterFilesByExtensionWithStatus(allFiles, '.bicep');
+
+  if (bicepFiles.length === 0) {
+    log.info('No .bicep files detected in PR changes');
+  } else {
+    log.info(`Detected ${bicepFiles.length} .bicep file(s):`);
+    bicepFiles.forEach((file) => {
+      log.info(`  - ${file.filename} (${file.change})`);
     });
   }
 

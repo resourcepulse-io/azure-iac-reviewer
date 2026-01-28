@@ -25,6 +25,9 @@ describe('PR Files', () => {
     sha: 'abc123',
     ref: 'feature-branch',
     fullName: 'test-owner/test-repo',
+    prTitle: 'Test PR',
+    prAuthor: 'test-user',
+    baseBranch: 'main',
   };
 
   const mockChangedFiles = [

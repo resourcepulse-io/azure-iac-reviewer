@@ -13,6 +13,9 @@ export interface PRContext {
   sha: string;
   ref: string;
   fullName: string; // owner/repo format (e.g., "myorg/myrepo")
+  prTitle: string;
+  prAuthor: string;
+  baseBranch: string;
 }
 
 /**
@@ -21,9 +24,16 @@ export interface PRContext {
 interface GitHubEvent {
   pull_request?: {
     number: number;
+    title: string;
     head: {
       sha: string;
       ref: string;
+    };
+    base: {
+      ref: string;
+    };
+    user: {
+      login: string;
     };
   };
   repository?: {
@@ -83,6 +93,9 @@ export function parsePRContext(): PRContext {
   const repo = eventPayload.repository.name;
   const sha = eventPayload.pull_request.head.sha;
   const ref = eventPayload.pull_request.head.ref;
+  const prTitle = eventPayload.pull_request.title || '';
+  const prAuthor = eventPayload.pull_request.user?.login || '';
+  const baseBranch = eventPayload.pull_request.base?.ref || 'main';
 
   if (!owner || !repo || !prNumber) {
     throw new Error(
@@ -95,6 +108,8 @@ export function parsePRContext(): PRContext {
   log.info(`Detected PR #${prNumber} in ${fullName}`);
   log.debug(`PR head SHA: ${sha}`);
   log.debug(`PR head ref: ${ref}`);
+  log.debug(`PR title: ${prTitle}`);
+  log.debug(`PR author: ${prAuthor}`);
 
   return {
     owner,
@@ -104,6 +119,9 @@ export function parsePRContext(): PRContext {
     sha,
     ref,
     fullName,
+    prTitle,
+    prAuthor,
+    baseBranch,
   };
 }
 

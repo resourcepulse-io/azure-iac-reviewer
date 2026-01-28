@@ -29915,9 +29915,9 @@ exports.analyzeResources = analyzeResources;
 const log = __importStar(__nccwpck_require__(6555));
 const sanitize_1 = __nccwpck_require__(8020);
 /**
- * Backend API URL - hardcoded and non-configurable by users
+ * Default backend API URL
  */
-const BACKEND_URL = 'https://api.resourcepulse.io';
+const DEFAULT_BACKEND_URL = 'https://api.resourcepulse.io';
 /**
  * Default timeout for backend requests (30 seconds)
  */
@@ -29999,14 +29999,28 @@ function formatKindLabel(kind) {
     return labels[kind] || kind.toUpperCase();
 }
 /**
+ * Convert SanitizedResource to ApiResource format
+ * @param resource - Sanitized resource
+ * @returns API-compatible resource
+ */
+function toApiResource(resource) {
+    return {
+        kind: resource.kind,
+        region: resource.region,
+        sku: resource.sku,
+        count: resource.count,
+        change: resource.change,
+    };
+}
+/**
  * Call backend API with timeout and error handling
  * @param resources - Sanitized resources to analyze
  * @param apiKey - Backend authentication token
  * @param backendUrl - Backend API endpoint
- * @param repoInfo - Optional repository metadata
+ * @param callContext - Full context including repo, PR, run, and git context
  * @returns Backend response or null if failed
  */
-async function callBackend(resources, apiKey, backendUrl, repoInfo) {
+async function callBackend(resources, apiKey, backendUrl, callContext) {
     // Validate no sensitive data before sending
     const validation = (0, sanitize_1.validateNoSensitiveData)(resources);
     if (!validation.valid) {
@@ -30014,19 +30028,19 @@ async function callBackend(resources, apiKey, backendUrl, repoInfo) {
         log.error(`Violations: ${validation.violations.join(', ')}`);
         throw new Error('Privacy contract violation: Sanitized data contains sensitive information');
     }
+    // Convert to API resource format
+    const apiResources = resources.map(toApiResource);
     const requestPayload = {
-        resources,
-        timestamp: new Date().toISOString(),
+        repo: callContext.repo,
+        pr: callContext.pr,
+        run: callContext.run,
+        context: callContext.context,
+        resources: apiResources,
     };
-    // Include repository info if provided
-    if (repoInfo) {
-        requestPayload.repo = repoInfo;
-    }
     log.debug(`Calling backend API: ${backendUrl}`);
     log.debug(`Sending ${resources.length} sanitized resource(s)`);
-    if (repoInfo) {
-        log.debug(`Repository: ${repoInfo.fullName}`);
-    }
+    log.debug(`Repository: ${callContext.repo.fullName}`);
+    log.debug(`PR #${callContext.pr.number}: ${callContext.pr.title}`);
     try {
         // Create AbortController for timeout
         const controller = new AbortController();
@@ -30084,12 +30098,15 @@ async function callBackend(resources, apiKey, backendUrl, repoInfo) {
  * Analyze resources using backend service or local fallback
  * This is the main entry point for backend integration
  * @param resources - Sanitized resources to analyze
- * @param apiKey - Optional backend authentication token
- * @param repoFullName - Optional repository full name (owner/repo format)
+ * @param options - Analysis options including API key, server address, and context
  * @returns Analysis result with markdown message
  */
-async function analyzeResources(resources, apiKey, repoFullName) {
+async function analyzeResources(resources, options = {}) {
+    const { apiKey, serverAddress, callContext } = options;
+    const backendUrl = serverAddress || DEFAULT_BACKEND_URL;
     log.debug('Starting resource analysis');
+    log.debug(`API key provided: ${apiKey ? 'yes' : 'no'}`);
+    log.debug(`Server address: ${backendUrl}`);
     // If no API key provided, use local fallback immediately
     if (!apiKey) {
         log.info('No API key provided - using local fallback analysis');
@@ -30100,22 +30117,41 @@ async function analyzeResources(resources, apiKey, repoFullName) {
             markdown,
         };
     }
-    // Try to call backend using the hardcoded BACKEND_URL
-    log.info(`Attempting backend analysis at ${BACKEND_URL}`);
-    // Prepare repository info if provided
-    const repoInfo = repoFullName
-        ? { fullName: repoFullName }
-        : undefined;
-    const backendResponse = await callBackend(resources, apiKey, BACKEND_URL, repoInfo);
-    // If backend succeeded, return its response
-    if (backendResponse && (backendResponse.markdown || backendResponse.message)) {
-        log.info('Backend analysis completed successfully');
-        const markdown = backendResponse.markdown || backendResponse.message || '';
+    // If no call context provided, use local fallback
+    if (!callContext) {
+        log.warning('No call context provided - using local fallback analysis');
+        const markdown = generateLocalFallback(resources);
         return {
             success: true,
-            source: 'backend',
+            source: 'local',
             markdown,
         };
+    }
+    // Try to call backend
+    log.info(`Attempting backend analysis at ${backendUrl}`);
+    const backendResponse = await callBackend(resources, apiKey, backendUrl, callContext);
+    // Check if backend response indicates success
+    if (backendResponse) {
+        // Respect the success flag from the API response
+        if (backendResponse.success === false) {
+            log.warning('Backend returned success=false - falling back to local summary');
+            const markdown = generateLocalFallback(resources);
+            return {
+                success: false,
+                source: 'local',
+                markdown,
+            };
+        }
+        // Backend succeeded - return its response
+        if (backendResponse.markdown || backendResponse.message) {
+            log.info('Backend analysis completed successfully');
+            const markdown = backendResponse.markdown || backendResponse.message || '';
+            return {
+                success: true,
+                source: 'backend',
+                markdown,
+            };
+        }
     }
     // Backend failed - use local fallback
     log.warning('Backend analysis failed - falling back to local summary');
@@ -30404,6 +30440,9 @@ function parsePRContext() {
     const repo = eventPayload.repository.name;
     const sha = eventPayload.pull_request.head.sha;
     const ref = eventPayload.pull_request.head.ref;
+    const prTitle = eventPayload.pull_request.title || '';
+    const prAuthor = eventPayload.pull_request.user?.login || '';
+    const baseBranch = eventPayload.pull_request.base?.ref || 'main';
     if (!owner || !repo || !prNumber) {
         throw new Error('Event payload is missing required fields (owner, repo, or PR number)');
     }
@@ -30411,6 +30450,8 @@ function parsePRContext() {
     log.info(`Detected PR #${prNumber} in ${fullName}`);
     log.debug(`PR head SHA: ${sha}`);
     log.debug(`PR head ref: ${ref}`);
+    log.debug(`PR title: ${prTitle}`);
+    log.debug(`PR author: ${prAuthor}`);
     return {
         owner,
         repo,
@@ -30419,6 +30460,9 @@ function parsePRContext() {
         sha,
         ref,
         fullName,
+        prTitle,
+        prAuthor,
+        baseBranch,
     };
 }
 /**
@@ -30494,8 +30538,29 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.listChangedFiles = listChangedFiles;
 exports.filterFilesByExtension = filterFilesByExtension;
+exports.filterFilesByExtensionWithStatus = filterFilesByExtensionWithStatus;
 exports.listBicepFiles = listBicepFiles;
+exports.listBicepFilesWithStatus = listBicepFilesWithStatus;
 const log = __importStar(__nccwpck_require__(6555));
+/**
+ * Map GitHub file status to API change type
+ * @param status - GitHub file status
+ * @returns Normalized change type
+ */
+function mapFileStatusToChangeType(status) {
+    switch (status) {
+        case 'added':
+            return 'added';
+        case 'removed':
+            return 'removed';
+        case 'modified':
+        case 'changed':
+        case 'renamed':
+        case 'copied':
+        default:
+            return 'modified';
+    }
+}
 /**
  * List all files changed in a pull request
  * @param octokit - Authenticated Octokit instance
@@ -30542,6 +30607,22 @@ function filterFilesByExtension(files, extension) {
     return filtered;
 }
 /**
+ * Filter files by extension and include change status
+ * @param files - Array of changed files
+ * @param extension - File extension to filter by (with or without leading dot)
+ * @returns Filtered array of files with change status
+ */
+function filterFilesByExtensionWithStatus(files, extension) {
+    // Normalize extension to always have leading dot and lowercase
+    const normalizedExt = (extension.startsWith('.') ? extension : `.${extension}`).toLowerCase();
+    return files
+        .filter((file) => file.filename.toLowerCase().endsWith(normalizedExt))
+        .map((file) => ({
+        filename: file.filename,
+        change: mapFileStatusToChangeType(file.status),
+    }));
+}
+/**
  * List changed .bicep files in a pull request
  * @param octokit - Authenticated Octokit instance
  * @param context - PR context with owner, repo, and PR number
@@ -30559,6 +30640,28 @@ async function listBicepFiles(octokit, context) {
         log.info(`Detected ${bicepFiles.length} .bicep file(s):`);
         bicepFiles.forEach((file) => {
             log.info(`  - ${file}`);
+        });
+    }
+    return bicepFiles;
+}
+/**
+ * List changed .bicep files in a pull request with their change status
+ * @param octokit - Authenticated Octokit instance
+ * @param context - PR context with owner, repo, and PR number
+ * @returns Array of .bicep files with change status
+ * @throws Error if API call fails
+ */
+async function listBicepFilesWithStatus(octokit, context) {
+    log.info('Detecting changed .bicep files in PR with status');
+    const allFiles = await listChangedFiles(octokit, context);
+    const bicepFiles = filterFilesByExtensionWithStatus(allFiles, '.bicep');
+    if (bicepFiles.length === 0) {
+        log.info('No .bicep files detected in PR changes');
+    }
+    else {
+        log.info(`Detected ${bicepFiles.length} .bicep file(s):`);
+        bicepFiles.forEach((file) => {
+            log.info(`  - ${file.filename} (${file.change})`);
         });
     }
     return bicepFiles;
@@ -31126,6 +31229,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.sanitizeResources = sanitizeResources;
+exports.sanitizeResourcesWithChanges = sanitizeResourcesWithChanges;
 exports.validateNoSensitiveData = validateNoSensitiveData;
 const log = __importStar(__nccwpck_require__(6555));
 /**
@@ -31339,12 +31443,14 @@ function sanitizeProperties(properties, removedFields) {
  * Sanitize a single resource by removing all identifying information
  * @param resource - Resource metadata to sanitize
  * @param removedFields - Set to track removed field names
+ * @param change - Change type for this resource (added/modified/removed)
  * @returns Sanitized resource
  */
-function sanitizeSingleResource(resource, removedFields) {
+function sanitizeSingleResource(resource, removedFields, change = 'modified') {
     const sanitized = {
-        type: resource.type,
         kind: resource.kind,
+        count: 1, // Each resource counts as 1; aggregation happens at a higher level if needed
+        change,
     };
     // SKU is safe to include (e.g., "Standard_D2s_v3")
     if (resource.sku) {
@@ -31354,6 +31460,8 @@ function sanitizeSingleResource(resource, removedFields) {
     if (resource.region) {
         sanitized.region = resource.region;
     }
+    // Keep type for internal use (optional in API)
+    sanitized.type = resource.type;
     // API version is safe to include (e.g., "2023-01-01")
     if (resource.apiVersion) {
         sanitized.apiVersion = resource.apiVersion;
@@ -31371,14 +31479,39 @@ function sanitizeSingleResource(resource, removedFields) {
  * Sanitize resource metadata array by removing all identifying information
  * This is the main privacy layer ensuring no PII or resource identifiers reach the backend
  * @param resources - Array of resource metadata to sanitize
+ * @param change - Default change type for all resources (can be overridden per-resource)
  * @returns Sanitization result with safe resources and removed field log
  */
-function sanitizeResources(resources) {
+function sanitizeResources(resources, change = 'modified') {
     log.debug(`Sanitizing ${resources.length} resource(s)`);
     const removedFields = new Set();
     const sanitizedResources = [];
     for (const resource of resources) {
-        const sanitized = sanitizeSingleResource(resource, removedFields);
+        const sanitized = sanitizeSingleResource(resource, removedFields, change);
+        sanitizedResources.push(sanitized);
+    }
+    const removedFieldsList = Array.from(removedFields).sort();
+    if (removedFieldsList.length > 0) {
+        log.debug(`Removed sensitive fields: ${removedFieldsList.join(', ')}`);
+    }
+    log.debug(`Sanitization complete: ${sanitizedResources.length} resource(s) sanitized`);
+    return {
+        resources: sanitizedResources,
+        resourceCount: sanitizedResources.length,
+        removedFields: removedFieldsList,
+    };
+}
+/**
+ * Sanitize resources with individual change types
+ * @param resourcesWithChange - Array of [resource, changeType] tuples
+ * @returns Sanitization result with safe resources and removed field log
+ */
+function sanitizeResourcesWithChanges(resourcesWithChange) {
+    log.debug(`Sanitizing ${resourcesWithChange.length} resource(s) with individual change types`);
+    const removedFields = new Set();
+    const sanitizedResources = [];
+    for (const { resource, change } of resourcesWithChange) {
+        const sanitized = sanitizeSingleResource(resource, removedFields, change);
         sanitizedResources.push(sanitized);
     }
     const removedFieldsList = Array.from(removedFields).sort();
@@ -31506,14 +31639,21 @@ async function run() {
         // Initialize GitHub context and Octokit client
         const [prContext, octokit] = (0, context_1.initializeGitHub)();
         log.info(`Processing PR #${prContext.prNumber} in ${prContext.owner}/${prContext.repo}`);
-        // List and filter .bicep files
-        const bicepFiles = await (0, prFiles_1.listBicepFiles)(octokit, prContext);
+        // List and filter .bicep files with change status
+        const bicepFilesWithStatus = await (0, prFiles_1.listBicepFilesWithStatus)(octokit, prContext);
         // Exit successfully if no .bicep files found (no comment spam)
-        if (bicepFiles.length === 0) {
+        if (bicepFilesWithStatus.length === 0) {
             log.info('No .bicep files to analyze. Exiting successfully.');
             return;
         }
-        log.info(`Found ${bicepFiles.length} .bicep file(s) to analyze`);
+        log.info(`Found ${bicepFilesWithStatus.length} .bicep file(s) to analyze`);
+        // Extract just the filenames for compilation
+        const bicepFiles = bicepFilesWithStatus.map((f) => f.filename);
+        // Create a map of filename to change type for later use
+        const fileChangeMap = new Map();
+        for (const file of bicepFilesWithStatus) {
+            fileChangeMap.set(file.filename, file.change);
+        }
         // Download and cache Bicep CLI
         const { ensureBicepCli, compileBicepFiles, formatCompilationErrors } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9788)));
         const bicepCliPath = await ensureBicepCli();
@@ -31534,16 +31674,21 @@ async function run() {
             return;
         }
         log.info(`${successfulCompilations.length} file(s) compiled successfully, proceeding with analysis`);
-        // Extract resource metadata from ARM templates
+        // Extract resource metadata from ARM templates with change tracking
         const { extractResourceMetadata } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(8476)));
-        const allResources = [];
+        const resourcesWithChange = [];
         for (const compilation of successfulCompilations) {
             try {
                 // Convert ARM template object back to JSON string for extraction
                 const armJson = JSON.stringify(compilation.armTemplate);
                 const extractionResult = extractResourceMetadata(armJson);
-                allResources.push(...extractionResult.resources);
-                log.debug(`Extracted ${extractionResult.resourceCount} resource(s) from ${compilation.filePath}`);
+                // Get the change type for this file
+                const change = fileChangeMap.get(compilation.filePath) || 'modified';
+                // Add resources with their change type
+                for (const resource of extractionResult.resources) {
+                    resourcesWithChange.push({ resource, change });
+                }
+                log.debug(`Extracted ${extractionResult.resourceCount} resource(s) from ${compilation.filePath} (${change})`);
             }
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -31551,21 +31696,48 @@ async function run() {
                 // Continue processing other files
             }
         }
-        if (allResources.length === 0) {
+        if (resourcesWithChange.length === 0) {
             log.info('No resources found in compiled templates. Nothing to analyze.');
             return;
         }
-        log.info(`Total resources detected: ${allResources.length}`);
-        // Sanitize resources (privacy layer)
-        const { sanitizeResources } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(8020)));
-        const sanitizationResult = sanitizeResources(allResources);
+        log.info(`Total resources detected: ${resourcesWithChange.length}`);
+        // Sanitize resources with change tracking (privacy layer)
+        const { sanitizeResourcesWithChanges } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(8020)));
+        const sanitizationResult = sanitizeResourcesWithChanges(resourcesWithChange);
         log.info(`Sanitized ${sanitizationResult.resourceCount} resource(s) for analysis`);
         // Get action inputs
         const apiKey = core.getInput('api_key') || undefined;
+        const serverAddress = core.getInput('server_address') || undefined;
         const commentMode = (core.getInput('comment_mode') || 'update');
-        // Analyze resources (backend or local fallback)
+        // Build backend call context
         const { analyzeResources } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(9325)));
-        const analysisResult = await analyzeResources(sanitizationResult.resources, apiKey, prContext.fullName);
+        const callContext = {
+            repo: {
+                owner: prContext.owner,
+                name: prContext.repo,
+                fullName: prContext.fullName,
+            },
+            pr: {
+                number: prContext.prNumber,
+                title: prContext.prTitle,
+                author: prContext.prAuthor,
+                baseBranch: prContext.baseBranch,
+            },
+            run: {
+                id: process.env.GITHUB_RUN_ID || '',
+                url: `https://github.com/${prContext.fullName}/actions/runs/${process.env.GITHUB_RUN_ID || ''}`,
+            },
+            context: {
+                sha: prContext.sha,
+                ref: prContext.ref,
+            },
+        };
+        // Analyze resources (backend or local fallback)
+        const analysisResult = await analyzeResources(sanitizationResult.resources, {
+            apiKey,
+            serverAddress,
+            callContext,
+        });
         log.info(`Analysis completed using ${analysisResult.source} source`);
         // Format as PR comment
         const { formatPRComment } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(1990)));
@@ -31574,7 +31746,7 @@ async function run() {
         const { createOrUpdateComment } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(6645)));
         await createOrUpdateComment(octokit, prContext, commentBody, commentMode);
         // Set action outputs
-        core.setOutput('resources_detected', allResources.length.toString());
+        core.setOutput('resources_detected', resourcesWithChange.length.toString());
         core.setOutput('analysis_status', 'success');
         log.info('Azure IaC Reviewer completed successfully');
     }

@@ -3,7 +3,7 @@
  * This shows the complete flow from analysis to formatted PR comment
  */
 
-import { analyzeResources } from '../../../src/backend/client';
+import { analyzeResources, BackendCallContext } from '../../../src/backend/client';
 import { formatPRComment, COMMENT_MARKER } from '../../../src/format/markdown';
 import { SanitizedResource } from '../../../src/iac/sanitize';
 import * as log from '../../../src/utils/log';
@@ -22,17 +22,43 @@ global.fetch = jest.fn();
 describe('Integration: Backend Client + Markdown Formatter', () => {
   const mockResources: SanitizedResource[] = [
     {
-      type: 'Microsoft.Compute/virtualMachines',
       kind: 'vm',
       sku: 'Standard_D2s_v3',
       region: 'eastus',
+      count: 1,
+      change: 'modified',
+      type: 'Microsoft.Compute/virtualMachines',
     },
     {
-      type: 'Microsoft.Storage/storageAccounts',
       kind: 'storage',
       region: 'westus',
+      count: 1,
+      change: 'added',
+      type: 'Microsoft.Storage/storageAccounts',
     },
   ];
+
+  const mockCallContext: BackendCallContext = {
+    repo: {
+      owner: 'test-owner',
+      name: 'test-repo',
+      fullName: 'test-owner/test-repo',
+    },
+    pr: {
+      number: 42,
+      title: 'Test PR',
+      author: 'test-user',
+      baseBranch: 'main',
+    },
+    run: {
+      id: '12345',
+      url: 'https://github.com/test-owner/test-repo/actions/runs/12345',
+    },
+    context: {
+      sha: 'abc123',
+      ref: 'feature-branch',
+    },
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -98,15 +124,15 @@ describe('Integration: Backend Client + Markdown Formatter', () => {
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: backendMarkdown }),
+        json: async () => ({ success: true, markdown: backendMarkdown }),
       });
 
       // Step 1: Analyze resources with backend
-      const analysisResult = await analyzeResources(
-        mockResources,
-        'test-api-key',
-        'https://api.example.com'
-      );
+      const analysisResult = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        serverAddress: 'https://api.example.com',
+        callContext: mockCallContext,
+      });
 
       expect(analysisResult.success).toBe(true);
       expect(analysisResult.source).toBe('backend');
@@ -155,14 +181,14 @@ storage:
       (global.fetch as jest.Mock).mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ markdown: complexMarkdown }),
+        json: async () => ({ success: true, markdown: complexMarkdown }),
       });
 
-      const analysisResult = await analyzeResources(
-        mockResources,
-        'test-api-key',
-        'https://api.example.com'
-      );
+      const analysisResult = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        serverAddress: 'https://api.example.com',
+        callContext: mockCallContext,
+      });
       const prComment = formatPRComment(analysisResult);
 
       // Verify all markdown elements are preserved
@@ -183,11 +209,11 @@ storage:
       );
 
       // Step 1: Analyze resources (will fall back to local)
-      const analysisResult = await analyzeResources(
-        mockResources,
-        'test-api-key',
-        'https://api.example.com'
-      );
+      const analysisResult = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        serverAddress: 'https://api.example.com',
+        callContext: mockCallContext,
+      });
 
       // Should fall back to local
       expect(analysisResult.success).toBe(true);
@@ -224,13 +250,13 @@ storage:
 
     it('should handle multiple resource kinds', async () => {
       const resources: SanitizedResource[] = [
-        { type: 'Microsoft.Compute/virtualMachines', kind: 'vm' },
-        { type: 'Microsoft.Compute/virtualMachines', kind: 'vm' },
-        { type: 'Microsoft.Compute/virtualMachines', kind: 'vm' },
-        { type: 'Microsoft.Storage/storageAccounts', kind: 'storage' },
-        { type: 'Microsoft.Storage/storageAccounts', kind: 'storage' },
-        { type: 'Microsoft.Web/serverfarms', kind: 'app_service_plan' },
-        { type: 'Microsoft.Sql/servers/databases', kind: 'sql_db' },
+        { kind: 'vm', count: 1, change: 'added', type: 'Microsoft.Compute/virtualMachines' },
+        { kind: 'vm', count: 1, change: 'modified', type: 'Microsoft.Compute/virtualMachines' },
+        { kind: 'vm', count: 1, change: 'added', type: 'Microsoft.Compute/virtualMachines' },
+        { kind: 'storage', count: 1, change: 'added', type: 'Microsoft.Storage/storageAccounts' },
+        { kind: 'storage', count: 1, change: 'modified', type: 'Microsoft.Storage/storageAccounts' },
+        { kind: 'app_service_plan', count: 1, change: 'added', type: 'Microsoft.Web/serverfarms' },
+        { kind: 'sql_db', count: 1, change: 'added', type: 'Microsoft.Sql/servers/databases' },
       ];
 
       const analysisResult = await analyzeResources(resources);
@@ -249,21 +275,21 @@ storage:
       // 1. Get sanitized resources (from previous steps in pipeline)
       const resources: SanitizedResource[] = [
         {
-          type: 'Microsoft.Compute/virtualMachines',
           kind: 'vm',
           sku: 'Standard_B2s',
           region: 'eastus',
+          count: 1,
+          change: 'added',
+          type: 'Microsoft.Compute/virtualMachines',
         },
       ];
 
       // 2. Analyze with backend (or local fallback)
-      const apiKey = 'optional-api-key';
-      const backendUrl = 'https://api.example.com';
-      const analysisResult = await analyzeResources(
-        resources,
-        apiKey,
-        backendUrl
-      );
+      const analysisResult = await analyzeResources(resources, {
+        apiKey: 'optional-api-key',
+        serverAddress: 'https://api.example.com',
+        callContext: mockCallContext,
+      });
 
       // 3. Format for PR comment
       const prCommentBody = formatPRComment(analysisResult);
@@ -287,10 +313,12 @@ storage:
       const largeResourceList: SanitizedResource[] = Array.from(
         { length: 50 },
         (_, i) => ({
-          type: 'Microsoft.Compute/virtualMachines',
           kind: 'vm',
           sku: `Standard_D${i % 4}s_v3`,
           region: ['eastus', 'westus', 'centralus'][i % 3],
+          count: 1,
+          change: 'added' as const,
+          type: 'Microsoft.Compute/virtualMachines',
         })
       );
 
@@ -308,15 +336,16 @@ storage:
         ok: true,
         status: 200,
         json: async () => ({
+          success: true,
           message: 'Analysis complete: All resources look good!',
         }),
       });
 
-      const analysisResult = await analyzeResources(
-        mockResources,
-        'test-api-key',
-        'https://api.example.com'
-      );
+      const analysisResult = await analyzeResources(mockResources, {
+        apiKey: 'test-api-key',
+        serverAddress: 'https://api.example.com',
+        callContext: mockCallContext,
+      });
       const prComment = formatPRComment(analysisResult);
 
       expect(prComment).toContain('Analysis complete');

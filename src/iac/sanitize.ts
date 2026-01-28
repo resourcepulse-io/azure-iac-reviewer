@@ -2,14 +2,22 @@ import * as log from '../utils/log';
 import { ResourceMetadata } from './armExtract';
 
 /**
+ * Change type for resources - matches API contract
+ */
+export type ResourceChangeType = 'added' | 'modified' | 'removed';
+
+/**
  * Sanitized resource data safe for transmission to backend
  * Only contains non-identifying metadata
  */
 export interface SanitizedResource {
-  type: string;
   kind: string;
-  sku?: string;
   region?: string;
+  sku?: string;
+  count: number;
+  change: ResourceChangeType;
+  // Fields kept for internal use but not sent to API
+  type?: string;
   apiVersion?: string;
   safeProperties?: Record<string, unknown>;
 }
@@ -275,15 +283,18 @@ function sanitizeProperties(
  * Sanitize a single resource by removing all identifying information
  * @param resource - Resource metadata to sanitize
  * @param removedFields - Set to track removed field names
+ * @param change - Change type for this resource (added/modified/removed)
  * @returns Sanitized resource
  */
 function sanitizeSingleResource(
   resource: ResourceMetadata,
-  removedFields: Set<string>
+  removedFields: Set<string>,
+  change: ResourceChangeType = 'modified'
 ): SanitizedResource {
   const sanitized: SanitizedResource = {
-    type: resource.type,
     kind: resource.kind,
+    count: 1, // Each resource counts as 1; aggregation happens at a higher level if needed
+    change,
   };
 
   // SKU is safe to include (e.g., "Standard_D2s_v3")
@@ -295,6 +306,9 @@ function sanitizeSingleResource(
   if (resource.region) {
     sanitized.region = resource.region;
   }
+
+  // Keep type for internal use (optional in API)
+  sanitized.type = resource.type;
 
   // API version is safe to include (e.g., "2023-01-01")
   if (resource.apiVersion) {
@@ -316,10 +330,12 @@ function sanitizeSingleResource(
  * Sanitize resource metadata array by removing all identifying information
  * This is the main privacy layer ensuring no PII or resource identifiers reach the backend
  * @param resources - Array of resource metadata to sanitize
+ * @param change - Default change type for all resources (can be overridden per-resource)
  * @returns Sanitization result with safe resources and removed field log
  */
 export function sanitizeResources(
-  resources: ResourceMetadata[]
+  resources: ResourceMetadata[],
+  change: ResourceChangeType = 'modified'
 ): SanitizationResult {
   log.debug(`Sanitizing ${resources.length} resource(s)`);
 
@@ -327,7 +343,41 @@ export function sanitizeResources(
   const sanitizedResources: SanitizedResource[] = [];
 
   for (const resource of resources) {
-    const sanitized = sanitizeSingleResource(resource, removedFields);
+    const sanitized = sanitizeSingleResource(resource, removedFields, change);
+    sanitizedResources.push(sanitized);
+  }
+
+  const removedFieldsList = Array.from(removedFields).sort();
+  if (removedFieldsList.length > 0) {
+    log.debug(`Removed sensitive fields: ${removedFieldsList.join(', ')}`);
+  }
+
+  log.debug(
+    `Sanitization complete: ${sanitizedResources.length} resource(s) sanitized`
+  );
+
+  return {
+    resources: sanitizedResources,
+    resourceCount: sanitizedResources.length,
+    removedFields: removedFieldsList,
+  };
+}
+
+/**
+ * Sanitize resources with individual change types
+ * @param resourcesWithChange - Array of [resource, changeType] tuples
+ * @returns Sanitization result with safe resources and removed field log
+ */
+export function sanitizeResourcesWithChanges(
+  resourcesWithChange: Array<{ resource: ResourceMetadata; change: ResourceChangeType }>
+): SanitizationResult {
+  log.debug(`Sanitizing ${resourcesWithChange.length} resource(s) with individual change types`);
+
+  const removedFields = new Set<string>();
+  const sanitizedResources: SanitizedResource[] = [];
+
+  for (const { resource, change } of resourcesWithChange) {
+    const sanitized = sanitizeSingleResource(resource, removedFields, change);
     sanitizedResources.push(sanitized);
   }
 

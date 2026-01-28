@@ -32,9 +32,16 @@ describe('GitHub Context', () => {
     const mockEventPayload = {
       pull_request: {
         number: 42,
+        title: 'Test PR',
         head: {
           sha: 'abc123',
           ref: 'feature-branch',
+        },
+        base: {
+          ref: 'main',
+        },
+        user: {
+          login: 'test-user',
         },
       },
       repository: {
@@ -61,6 +68,9 @@ describe('GitHub Context', () => {
         sha: 'abc123',
         ref: 'feature-branch',
         fullName: 'test-owner/test-repo',
+        prTitle: 'Test PR',
+        prAuthor: 'test-user',
+        baseBranch: 'main',
       });
 
       expect(mockFs.readFileSync).toHaveBeenCalledWith('/path/to/event.json', 'utf8');
@@ -170,9 +180,16 @@ describe('GitHub Context', () => {
     const mockEventPayload = {
       pull_request: {
         number: 42,
+        title: 'Test PR',
         head: {
           sha: 'abc123',
           ref: 'feature-branch',
+        },
+        base: {
+          ref: 'main',
+        },
+        user: {
+          login: 'test-user',
         },
       },
       repository: {
@@ -200,6 +217,9 @@ describe('GitHub Context', () => {
         sha: 'abc123',
         ref: 'feature-branch',
         fullName: 'test-owner/test-repo',
+        prTitle: 'Test PR',
+        prAuthor: 'test-user',
+        baseBranch: 'main',
       });
 
       expect(octokit).toBeDefined();

@@ -10,6 +10,9 @@ export interface PRContext {
     sha: string;
     ref: string;
     fullName: string;
+    prTitle: string;
+    prAuthor: string;
+    baseBranch: string;
 }
 /**
  * Parse GITHUB_EVENT_PATH and validate it's a pull_request event
