@@ -3,7 +3,7 @@
 A GitHub Action that analyzes Azure Bicep files in pull requests, providing cost insights and best practice recommendations while maintaining strict privacy standards.
 
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?style=flat&logo=github-actions&logoColor=white)](https://github.com/resourcepulse-io/azure-iac-reviewer)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: BSL-1.1](https://img.shields.io/badge/License-BSL--1.1-blue.svg)](LICENSE)
 
 ## Features
 
@@ -93,6 +93,7 @@ jobs:
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `api_key` | No | _(empty)_ | API key for the Azure IaC Reviewer backend service. If not provided, the action uses local analysis. |
+| `server_address` | No | `https://api.resourcepulse.io` | Backend API endpoint URL. |
 | `comment_mode` | No | `update` | Comment behavior: `update` to update existing PR comment, `new` to create a new comment each time. |
 
 ## Action Outputs
@@ -221,7 +222,9 @@ npm run test:unit     # Unit tests only
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Business Source License 1.1 - see [LICENSE](LICENSE) for details.
+
+This software converts to Apache 2.0 on 2031-01-28.
 
 ## Contributing
 
